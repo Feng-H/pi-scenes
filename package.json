@@ -1,0 +1,34 @@
+{
+  "name": "pi-scenes",
+  "version": "0.1.0",
+  "description": "pi 扩展：场景切换器。通用层 extension/skill 恒加载 + 按场景叠加分场景资源，/scene 一键切换并热重载；数据模型前向兼容 主场景→子场景 层级（extends 链）。",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "author": "Feng-H",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Feng-H/pi-scenes.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Feng-H/pi-scenes/issues"
+  },
+  "homepage": "https://github.com/Feng-H/pi-scenes#readme",
+  "files": [
+    "extensions",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
