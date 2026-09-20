@@ -5,6 +5,7 @@
   "keywords": [
     "pi-package"
   ],
+  "type": "module",
   "license": "MIT",
   "author": "Feng-H",
   "repository": {
