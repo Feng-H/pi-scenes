@@ -1,12 +1,137 @@
 # pi-scenes
 
-> [pi coding agent](https://pi.dev) 场景切换器：**通用层 + 分场景层**的 extension / skill 打包切换。
+[![npm version](https://img.shields.io/npm/v/pi-scenes.svg?color=blue)](https://www.npmjs.com/package/pi-scenes)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![pi-package](https://img.shields.io/badge/pi-package-00b57a)](https://pi.dev/packages)
+
+**[English](#what-it-is) | [简体中文](#中文说明)**
+
+> Scenario switcher for [pi](https://pi.dev): bundle extensions & skills into a **common layer + per-scene layers**, switch with one command, hot-reloaded.
+
+## What it is
+
+pi loads every installed extension and every skill globally — the prompt grows fat, and office skills leak tokens while you code. **pi-scenes adds a scenario dimension on top:**
+
+```
+active resources = common layer ∪ current scene
+```
+
+- **Common layer** — extensions + skills that stay loaded in *every* scenario (quota display, session carryover…)
+- **Scene layers** — per-scenario bundles (coding / office / writing…), loaded only while active
+- Switching rewrites `packages`/`skills` in `settings.json`, then `ctx.reload()` hot-reloads — **no pi restart, session untouched**
+- The data model reserves an `extends` chain (with cycle detection) for future **parent → child scene** hierarchies
+
+## Install
+
+```bash
+pi install npm:pi-scenes
+```
+
+Or straight from git (no build step — pi loads the TypeScript source via jiti):
+
+```bash
+pi install git:github.com/Feng-H/pi-scenes
+```
+
+Then `/reload` and `/scene` is live.
+
+## Quick start
+
+```
+/scene            # picker: all scenes, ● current, ○ switchable
+/scene coding     # switch directly to the coding scene
+/scene office     # switch to the office scene
+/scene off        # common layer only (scene off)
+/scene status     # show active scene + effective packages/skills
+/scene init       # scaffold scenes.json template + scene skill dirs
+```
+
+First run of `/scene` offers to generate the template. Edit it to fit your setup:
+
+```jsonc
+// ~/.pi/agent/scenes.json
+{
+  "common": {                              // ── common layer: always loaded
+    "description": "common",
+    "packages": ["npm:pi-zai-usage"],
+    "skills": ["~/.pi/agent/scenes/common/skills"]
+  },
+  "scenes": {                              // ── scene layers: stacked when active
+    "coding": {
+      "description": "coding",
+      "packages": ["npm:pi-carryover"],
+      "skills": ["~/.pi/agent/scenes/coding/skills"]
+    },
+    "office": {
+      "description": "office work",
+      "packages": [
+        { "source": "npm:pi-docparser", "skills": ["doc-parse"] }   // object form = load only part of a package
+      ],
+      "skills": ["~/.pi/agent/scenes/office/skills"]
+    }
+  }
+}
+```
+
+Drop `SKILL.md` folders (or `.md` files) into a scene's skill directory; the whole directory toggles with the scene. `/scene init` scaffolds `~/.pi/agent/scenes/{common,coding,office}/skills/`.
+
+## How it works
+
+```
+/scene coding
+   │
+   ├─ read scenes.json → target set = common ∪ coding (extends chains resolved)
+   ├─ missing packages → confirm → `pi install` each (global scope isn't auto-installed)
+   ├─ rewrite settings.json (see "Injection & reclamation")
+   └─ await ctx.reload()  → extensions/skills hot-reload, session uninterrupted
+```
+
+### Injection & reclamation (your manual config stays untouched)
+
+- `~/.pi/agent/scenes-state.json` records the entries this extension injected (`managed`)
+- On switch: **precisely remove old managed entries first, then append new target entries that are absent**
+- Packages/skills you configured by hand are never touched; if a scene target overlaps a manual entry, it's `borrowed` and survives switching away
+- `settings.json` is backed up to `settings.json.scenes-bak` before every write; writes are atomic (tmp + rename)
+
+### Field reference
+
+| Field | Description |
+|---|---|
+| `common.packages` / `common.skills` | common-layer resources, always loaded |
+| `scenes.<name>.packages` | accepts `"npm:<pkg>"`, `"git:github.com/u/r"`, local paths, and object form (resource filtering, same grammar as pi settings) |
+| `scenes.<name>.skills` | paths/directories, `~` expanded |
+| `scenes.<name>.extends` | 🧪 inherit a parent scene (union merge + cycle detection) — forward-compatible entry for parent→child hierarchies |
+
+## Rollback
+
+```bash
+pi remove npm:pi-scenes                            # uninstall the extension
+cp ~/.pi/agent/settings.json.scenes-bak ~/.pi/agent/settings.json   # restore if needed
+```
+
+Before uninstalling, `/scene off` and prune entries you don't want to keep from `packages`/`skills`. `scenes.json` / `scenes-state.json` / the `scenes/` tree are inert leftovers — safe to keep or delete.
+
+## Development
+
+```bash
+git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
+npm test          # node:test, full coverage of injection/reclaim logic (no TUI needed)
+```
+
+Tests isolate via the `PI_SCENES_DIR` env var — your real `~/.pi/agent` is never touched.
+
+## License
+
+MIT
+
+---
+
+# 中文说明
+
+> [pi](https://pi.dev) 场景切换器：**通用层 + 分场景层**的 extension / skill 打包切换。
 > 写代码时 `/scene coding`，办公时 `/scene office`——一键换装，热重载生效。
 
-[![pi-package](https://img.shields.io/badge/pi-package-00b57a)](https://pi.dev/packages)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-## 为什么
+## 这是什么
 
 pi 的 `packages` / `skills` 是全局平铺的：所有已安装扩展、所有 skill 同时生效。
 于是上下文越来越肥——写代码时被办公 skill 占 token，办公时被代码 skill 干扰。
@@ -20,7 +145,7 @@ pi 的 `packages` / `skills` 是全局平铺的：所有已安装扩展、所有
 - **通用层**：任何场景下恒加载的 extension + skill（如配额显示、会话延续）
 - **场景层**：每个场景自己的一组 extension + skill，激活才加载
 - 切换 = 改写 `settings.json` 的 `packages`/`skills` → `ctx.reload()` 热重载，**无需重启 pi**
-- 数据模型预留 `extends` 继承链，为将来「主场景 → 子场景」层级铺路
+- 数据模型预留 `extends` 继承链（带环检测），为将来「主场景 → 子场景」层级铺路
 
 ## 安装
 
@@ -84,7 +209,7 @@ pi install git:github.com/Feng-H/pi-scenes
    │
    ├─ 读 scenes.json → 生效集合 = common ∪ coding（extends 链自动展开）
    ├─ 缺失的包 → confirm 后逐个 `pi install`（全局 scope pi 不自动装）
-   ├─ 改写 settings.json（见下方「注入与回收」）
+   ├─ 改写 settings.json（见「注入与回收」）
    └─ await ctx.reload()  → 扩展/skill 热重载，会话不中断
 ```
 
