@@ -1,6 +1,7 @@
 # pi-scenes
 
 [![npm version](https://img.shields.io/npm/v/pi-scenes.svg?color=blue)](https://www.npmjs.com/package/pi-scenes)
+[![npm downloads](https://img.shields.io/npm/dt/pi-scenes.svg?color=green)](https://www.npmjs.com/package/pi-scenes)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![pi-package](https://img.shields.io/badge/pi-package-00b57a)](https://pi.dev/packages)
 
