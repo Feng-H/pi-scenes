@@ -676,6 +676,36 @@ export function makeCore(baseDir: string) {
 		return out;
 	}
 
+	/**
+	 * 身份级缺失判定：磁盘已装，或 settings 已手配同包另一种写法（切换时按 borrowed 借用）。
+	 * 必须在 pi install 之前做：否则 pi install 会向 settings 追加第二种写法，
+	 * 同一扩展被加载两份 → pi 启动时工具重名冲突退出。
+	 */
+	function findMissingPackages(target: PackageEntry[], settingsPackages: PackageEntry[]): PackageEntry[] {
+		return target.filter((e) => !isPackageInstalled(e) && !settingsPackages.some((x) => sameResource(x, e)));
+	}
+
+	/**
+	 * 检测 settings.json 里同一包多种写法并存（如本地路径 + npm 写法）。
+	 * 该状态会让 pi 启动时加载同一扩展两份、工具重名冲突退出，切换前必须拦截。
+	 */
+	function findSettingsDuplicates(pkgs: PackageEntry[]): Array<{ id: string; entries: string[] }> {
+		const out: Array<{ id: string; entries: string[] }> = [];
+		for (let i = 0; i < pkgs.length; i++) {
+			for (let j = i + 1; j < pkgs.length; j++) {
+				if (!sameResource(pkgs[i], pkgs[j])) continue;
+				const id = packageIdentity(pkgs[i])[0] ?? specOf(pkgs[i]);
+				let found = out.find((x) => x.id === id);
+				if (!found) {
+					found = { id, entries: [] };
+					out.push(found);
+				}
+				for (const s of [specOf(pkgs[i]), specOf(pkgs[j])]) if (!found.entries.includes(s)) found.entries.push(s);
+			}
+		}
+		return out;
+	}
+
 	/** 静态扫描安装目录，建 tool/command → 包名归因表 */
 	function buildToolMap(): { tools: Map<string, string>; commands: Map<string, string> } {
 		const tools = new Map<string, string>();
@@ -818,6 +848,8 @@ export function makeCore(baseDir: string) {
 		resolveScene,
 		computeTarget,
 		isPackageInstalled,
+		findMissingPackages,
+		findSettingsDuplicates,
 		applyToSettings,
 		findSpecCollisions,
 		beginSession,
@@ -860,8 +892,25 @@ export default function (pi: ExtensionAPI) {
 			);
 		}
 
+		const prePkgs = (readJson<Record<string, unknown>>(core.paths.settingsFile, {}).packages ?? []) as PackageEntry[];
+
+		// settings 已有同包异写法并存（无论是否本扩展造成）：pi 启动会加载同一扩展两份、
+		// 工具重名冲突退出 —— 先拦截并给出修复指引，避免加重坏状态
+		const dups = core.findSettingsDuplicates(prePkgs);
+		if (dups.length > 0) {
+			ctx.ui.notify(
+				`⚠️ settings.json 里同一包存在多种写法并存，pi 启动时会因工具重名冲突而退出，请先手动删除其中一种：\n${dups
+					.map((d) => `  · ${d.id}: ${d.entries.join(" | ")}`)
+					.join("\n")}\n修复后再切换场景`,
+				"error",
+			);
+			return;
+		}
+
 		// 缺失包：确认后逐个 pi install（全局 scope pi 不自动装，必须显式装）
-		const missing = target.packages.filter((e) => !core.isPackageInstalled(e));
+		// 身份级判定：settings 已手配同包异写法（如本地路径）→ 视为可用，跳过安装；
+		// 否则 pi install 会向 settings 追加第二种写法 → 同一扩展加载两份 → pi 启动冲突退出
+		const missing = core.findMissingPackages(target, prePkgs);
 		let preInstallPackages: PackageEntry[] | undefined;
 		if (missing.length > 0) {
 			const ok = await ctx.ui.confirm(
@@ -872,7 +921,7 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("已取消切换（未做任何修改）", "info");
 				return;
 			}
-			preInstallPackages = readJson<Record<string, unknown>>(core.paths.settingsFile, {}).packages as PackageEntry[] | undefined ?? [];
+			preInstallPackages = prePkgs;
 			for (const m of missing) {
 				const r = spawnSync("pi", ["install", specOf(m)], { stdio: "inherit" });
 				if (r.status !== 0) {
@@ -880,7 +929,8 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 			}
-			const still = target.packages.filter((e) => !core.isPackageInstalled(e));
+			const postPkgs = (readJson<Record<string, unknown>>(core.paths.settingsFile, {}).packages ?? []) as PackageEntry[];
+		const still = core.findMissingPackages(target, postPkgs);
 			if (still.length > 0) {
 				ctx.ui.notify(`仍有包未安装：${still.map(specOf).join(", ")}，已中止切换`, "error");
 				return;

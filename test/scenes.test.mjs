@@ -325,6 +325,27 @@ test("同包异写法：identity 去重 + borrowed 防重复注入 + 冲突检�
 	assert.equal(core.findSpecCollisions({ common: { packages: ["npm:pi-x"] }, scenes: { c: { packages: ["npm:pi-x"] } } }).length, 0);
 });
 
+test("切换缺失判定：settings 已手配本地路径写法 → 同包 npm 写法不算缺失（防 pi install 重复写入致启动冲突）", () => {
+	const { core } = tmpBase();
+	const local = "/Users/dev/pidev/pi-carryover"; // 本地路径写法，无需真实存在
+	writeSettings(core, { packages: [local] });
+	// npm 目录未装 pi-carryover，但 settings 已有同身份本地写法 → 不应触发 pi install（切换时会按 borrowed 借用）
+	const missing = core.findMissingPackages(["npm:pi-carryover", "npm:pi-notexist"], [local]);
+	assert.deepEqual(missing, ["npm:pi-notexist"]);
+});
+
+test("settings 异写法并存检测：双写法（会导致 pi 启动工具冲突退出）必须被检出", () => {
+	const { core } = tmpBase();
+	const local = "/Users/dev/pidev/pi-carryover";
+	const d = core.findSettingsDuplicates([local, "npm:pi-carryover", "npm:pi-lens"]);
+	assert.equal(d.length, 1);
+	assert.equal(d[0].id, "pi-carryover");
+	assert.ok(d[0].entries.includes(local) && d[0].entries.includes("npm:pi-carryover"));
+	assert.equal(core.findSettingsDuplicates([local, "npm:pi-lens"]).length, 0);
+	// git 写法与 npm 写法同身份也能检出
+	assert.equal(core.findSettingsDuplicates(["git:github.com/Feng-H/pi-carryover", "npm:pi-carryover"]).length, 1);
+});
+
 test("applyProposals：生成新配置且不动原对象", () => {
 	const cfg = { scenes: { coding: { packages: ["npm:pi-cold"], skills: ["~/skills-dead"] } } };
 	const next = applyProposals(cfg, [

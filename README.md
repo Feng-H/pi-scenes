@@ -127,6 +127,7 @@ In short: **installed forever, loaded per scene**. One caveat: extensions you in
 
 - Same spec in `common` and a scene → deduplicated at the union (loaded once).
 - Same package, different spellings (e.g. `npm:x@1.0.3` vs bare `npm:x`) → identity-level dedupe keeps the first (common > scene); a manually pinned variant in settings is treated as `borrowed` (no duplicate injection). `/scene` and `/scene status` warn about such spelling mismatches so you can unify them.
+- **Local path vs npm spelling (v0.2.1):** if settings already loads a package via a local path (e.g. your dev checkout `/Users/you/dev/pi-carryover`), a scene preset listing `npm:pi-carryover` will *borrow* your entry instead of installing — `pi install` is skipped so a second spelling is never appended to settings. This matters because two spellings of one package = the same extension loaded twice = pi exits at startup with a tool-name conflict. If settings ever ends up in that state (e.g. a manual `pi install` added the duplicate), `/scene` refuses to switch and tells you exactly which entries to delete.
 
 ## How it works
 
@@ -169,7 +170,7 @@ Before uninstalling, `/scene off` and prune entries you don't want to keep from 
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test, 14 cases: injection/reclaim + usage/evolution + conflict guards (no TUI needed)
+npm test          # node:test, 16 cases: injection/reclaim + usage/evolution + conflict guards (no TUI needed)
 ```
 
 Tests isolate via the `PI_SCENES_DIR` env var — your real `~/.pi/agent` is never touched.
@@ -307,6 +308,7 @@ pi install git:github.com/Feng-H/pi-scenes
 
 - 同一写法在 common 与场景重复 → 并集时去重，只加载一次。
 - 同包异写法（如 `npm:x@1.0.3` 与裸名 `npm:x`）→ 身份级去重取首个（common 优先）；settings 里手动 pin 的异写法条目视为 `borrowed`，不重复注入。`/scene` 切换与 `/scene status` 会对异写法发出提醒，建议统一。
+- **本地路径与 npm 写法并存（v0.2.1）：** 若 settings 已通过本地路径加载某包（如你的开发目录 `/Users/you/dev/pi-carryover`），场景预设里的 `npm:pi-carryover` 会*借用*你的条目而不安装——跳过 `pi install`，绝不向 settings 追加第二种写法。这一点很关键：同一包双写法 = 同一扩展被加载两份 = pi 启动时工具重名冲突退出。若 settings 已陷入该状态（如手动 `pi install` 造成的重复），`/scene` 会拒绝切换并明确告知需要删除哪个条目。
 
 ## 工作原理
 
@@ -349,7 +351,7 @@ managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packag
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test，14 用例：注入/回收 + 用量/进化 + 异写法冲突防护（无需 TUI）
+npm test          # node:test，16 用例：注入/回收 + 用量/进化 + 异写法冲突防护（无需 TUI）
 ```
 
 测试用 `PI_SCENES_DIR` 环境变量隔离基目录，不碰真实 `~/.pi/agent`。
