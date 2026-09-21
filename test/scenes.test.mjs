@@ -296,6 +296,35 @@ test("computeProposals：吸收 / 淘汰 / 保护规则", () => {
 	assert.ok(!ps3.some((p) => p.entry === "npm:pi-bar"));
 });
 
+test("同包异写法：identity 去重 + borrowed 防重复注入 + 冲突检测", () => {
+	const { core } = tmpBase();
+	writeSettings(core, { packages: [] });
+
+	// 1) common 写 @版本、场景写裸名 → target 只保留首个（common 优先）
+	const cfg = {
+		common: { packages: ["npm:pi-carryover@1.0.3"] },
+		scenes: { coding: { packages: ["npm:pi-carryover", "npm:pi-lens"] } },
+	};
+	const t = core.computeTarget("coding", cfg);
+	assert.equal(t.packages.filter((p) => String(p).includes("carryover")).length, 1);
+	assert.equal(t.packages[0], "npm:pi-carryover@1.0.3"); // keep-first：common 优先
+
+	// 2) 用户手动 pin 了版本、common 预设裸名 → 裸名按 borrowed 处理，不重复注入
+	const cfg2 = { common: { packages: ["npm:pi-carryover"] }, scenes: { coding: { packages: [] } } };
+	writeSettings(core, { packages: ["npm:pi-carryover@1.0.3"] }); // 用户手动 pin
+	const r = core.applyToSettings(core.computeTarget("coding", cfg2), "coding", undefined);
+	assert.deepEqual(r.borrowedPackages, ["npm:pi-carryover"]);
+	const s = readSettings(core);
+	assert.equal(s.packages.filter((p) => String(p).includes("carryover")).length, 1); // 仍只有用户的 @1.0.3
+
+	// 3) 冲突检测：异写法报、同写法跨层不报
+	const col = core.findSpecCollisions(cfg);
+	assert.equal(col.length, 1);
+	assert.equal(col[0].id, "pi-carryover");
+	assert.ok(col[0].entries.some((e) => e.where === "common" && e.spec === "npm:pi-carryover@1.0.3"));
+	assert.equal(core.findSpecCollisions({ common: { packages: ["npm:pi-x"] }, scenes: { c: { packages: ["npm:pi-x"] } } }).length, 0);
+});
+
 test("applyProposals：生成新配置且不动原对象", () => {
 	const cfg = { scenes: { coding: { packages: ["npm:pi-cold"], skills: ["~/skills-dead"] } } };
 	const next = applyProposals(cfg, [

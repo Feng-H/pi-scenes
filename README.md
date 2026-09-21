@@ -116,6 +116,18 @@ Tunables live in `scenes.json`:
 
 Usage data: `~/.pi/agent/scenes-usage.json` (machine-local, inert). View anytime with `/scene stats`.
 
+### Install ≠ load (two-layer model)
+
+- **Loading is driven by `settings.json` only.** Switching = rewrite the `packages`/`skills` arrays + `ctx.reload()`; resources absent from the arrays are never loaded — no tools registered, no prompt tokens spent. Scene skill dirs (`~/.pi/agent/scenes/<name>/skills`) are not auto-discovered by pi, so they toggle with the scene.
+- **Files stay on disk.** Switching away never uninstalls (`pi remove` for that); a switched-away package under `~/.pi/agent/npm/` is an inert file — instant switch-back, zero runtime cost.
+
+In short: **installed forever, loaded per scene**. One caveat: extensions you installed manually (your own entries in settings) are yours — pi-scenes treats them as `borrowed`, never touches them, so they stay loaded in *every* scene.
+
+### Duplicate & conflict handling
+
+- Same spec in `common` and a scene → deduplicated at the union (loaded once).
+- Same package, different spellings (e.g. `npm:x@1.0.3` vs bare `npm:x`) → identity-level dedupe keeps the first (common > scene); a manually pinned variant in settings is treated as `borrowed` (no duplicate injection). `/scene` and `/scene status` warn about such spelling mismatches so you can unify them.
+
 ## How it works
 
 ```
@@ -283,6 +295,18 @@ pi install git:github.com/Feng-H/pi-scenes
 ```
 
 用量数据：`~/.pi/agent/scenes-usage.json`（本机局部、惰性）。随时 `/scene stats` 查看。
+
+### 安装 ≠ 加载（两层模型）
+
+- **加载只看 settings.json。** 切换 = 改写 packages/skills 数组 + `ctx.reload()`；不在数组里的资源不会被加载——不注册工具、不占 prompt token。场景 skill 目录（`~/.pi/agent/scenes/<名>/skills`）不是 pi 自动发现路径，天然随场景启停。
+- **磁盘文件保留。** 切走不卸载（彻底清理用 `pi remove`）；不在 settings 里的包只是惰性文件——切回秒级，零运行时成本。
+
+一句话：**永远安装，只按场景加载**。注意：你手工 `pi install` 的条目属于你自己——pi-scenes 视为 `borrowed`，永不触碰，因此在**所有**场景都保持加载。
+
+### 重复与冲突处理
+
+- 同一写法在 common 与场景重复 → 并集时去重，只加载一次。
+- 同包异写法（如 `npm:x@1.0.3` 与裸名 `npm:x`）→ 身份级去重取首个（common 优先）；settings 里手动 pin 的异写法条目视为 `borrowed`，不重复注入。`/scene` 切换与 `/scene status` 会对异写法发出提醒，建议统一。
 
 ## 工作原理
 

@@ -161,6 +161,21 @@ function packageIdentity(entry: PackageEntry): string[] {
 }
 
 /** skill 名：SKILL.md frontmatter name → 一级标题 → 文件名 */
+/** 身份级判等：同一包的不同写法（裸名 vs @版本 pin）视为同一资源 */
+function sameResource(a: PackageEntry, b: PackageEntry): boolean {
+	if (sameEntry(a, b)) return true;
+	const ia = packageIdentity(a);
+	const ib = packageIdentity(b);
+	return ia.length > 0 && ia.some((x) => ib.includes(x));
+}
+
+/** 身份级去重（keep-first：common 优先于场景、子场景优先于父场景） */
+function dedupeByIdentity(entries: PackageEntry[]): PackageEntry[] {
+	const out: PackageEntry[] = [];
+	for (const e of entries) if (!out.some((x) => sameResource(x, e))) out.push(e);
+	return out;
+}
+
 function skillNameOf(file: string): string {
 	try {
 		const head = fs.readFileSync(file, "utf8").slice(0, 4000);
@@ -450,7 +465,7 @@ export function makeCore(baseDir: string) {
 		const common = cfg.common ?? {};
 		let scene: SceneDef = {};
 		if (active) scene = resolveScene(active, cfg);
-		const packages = dedupeEntries([...(common.packages ?? []), ...(scene.packages ?? [])]);
+		const packages = dedupeByIdentity(dedupeEntries([...(common.packages ?? []), ...(scene.packages ?? [])]));
 		const skills = [...new Set([...(common.skills ?? []), ...(scene.skills ?? [])].map(expandHome))];
 		return { packages, skills };
 	}
@@ -510,6 +525,9 @@ export function makeCore(baseDir: string) {
 				const inPre = (preInstallPackages ?? oldPkgs).some((x) => sameEntry(x, e));
 				if (!inPre) newManagedPkgs.push(e);
 				else result.borrowedPackages.push(e);
+			} else if (pkgs.some((x) => sameResource(x, e))) {
+				// 同包不同写法（如用户手动 pin 了版本）：视为借用，避免重复注入与重复加载
+				result.borrowedPackages.push(e);
 			} else {
 				pkgs.push(e);
 				newManagedPkgs.push(e);
@@ -636,6 +654,26 @@ export function makeCore(baseDir: string) {
 		}
 		usage._current = undefined;
 		saveUsage(usage);
+	}
+
+	/** 检测配置中「同一包多种写法」的冲突（如 common 写 @1.0.3、场景写裸名） */
+	function findSpecCollisions(cfg: ScenesFile): Array<{ id: string; entries: Array<{ where: string; spec: string }> }> {
+		const byId = new Map<string, Map<string, Array<{ where: string; spec: string }>>>();
+		const add = (layer: string, e: PackageEntry) => {
+			for (const id of packageIdentity(e)) {
+				const m = byId.get(id) ?? new Map();
+				const k = canonical(e);
+				m.set(k, [...(m.get(k) ?? []), { where: layer, spec: specOf(e) }]);
+				byId.set(id, m);
+			}
+		};
+		(cfg.common?.packages ?? []).forEach((e) => add("common", e));
+		for (const [name, def] of Object.entries(cfg.scenes ?? {})) (def.packages ?? []).forEach((e) => add(name, e));
+		const out: Array<{ id: string; entries: Array<{ where: string; spec: string }> }> = [];
+		for (const [id, m] of byId) {
+			if (m.size > 1) out.push({ id, entries: [...m.values()].flat() });
+		}
+		return out;
 	}
 
 	/** 静态扫描安装目录，建 tool/command → 包名归因表 */
@@ -781,6 +819,7 @@ export function makeCore(baseDir: string) {
 		computeTarget,
 		isPackageInstalled,
 		applyToSettings,
+		findSpecCollisions,
 		beginSession,
 		recordToolUse,
 		recordReflection,
@@ -809,6 +848,17 @@ export default function (pi: ExtensionAPI) {
 		const label = name ? `「${name}」${cfg.scenes?.[name]?.description ? ` — ${cfg.scenes[name].description}` : ""}` : "仅通用层";
 
 		const target = core.computeTarget(name, cfg);
+
+		// 同包多种写法：身份级去重已保证只加载首个，但提醒用户统一配置
+		const collisions = core.findSpecCollisions(cfg);
+		if (collisions.length > 0) {
+			ctx.ui.notify(
+				`⚠️ scenes.json 里同一包存在多种写法（已自动按首个生效，不重复加载）：\n${collisions
+					.map((c) => `  · ${c.id}: ${c.entries.map((e) => `${e.where}=${e.spec}`).join(" | ")}`)
+					.join("\n")}\n建议统一写法，避免困惑`,
+				"info",
+			);
+		}
 
 		// 缺失包：确认后逐个 pi install（全局 scope pi 不自动装，必须显式装）
 		const missing = target.packages.filter((e) => !core.isPackageInstalled(e));
@@ -879,12 +929,16 @@ export default function (pi: ExtensionAPI) {
 				const cfg = core.loadScenes();
 				const st = core.loadState();
 				const target = core.computeTarget(st.active, cfg);
+				const collisions = core.findSpecCollisions(cfg);
 				const lines = [
 					`当前场景：${st.active ? st.active : "（无，仅通用层）"}`,
 					`生效 packages（${target.packages.length}）：${target.packages.map(specOf).join(", ") || "—"}`,
 					`生效 skills（${target.skills.length}）：${target.skills.join(", ") || "—"}`,
 					`可用场景：${Object.keys(cfg.scenes ?? {}).join(", ") || "—"}`,
 				];
+				if (collisions.length > 0) {
+					lines.push(`⚠️ 同包多种写法（已按首个生效）：${collisions.map((c) => `${c.id}(${c.entries.map((e) => e.spec).join("|")})`).join("、")}`);
+				}
 				ctx.ui.notify(lines.join("\n"), "info");
 				return;
 			}
