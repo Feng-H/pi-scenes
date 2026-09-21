@@ -89,7 +89,7 @@ Edit it to fit your setup (each scene also gets a skill dir scaffold at `~/.pi/a
 }
 ```
 
-Drop `SKILL.md` folders (or `.md` files) into a scene's skill directory; the whole directory toggles with the scene. `/scene init` scaffolds `~/.pi/agent/scenes/{common,coding,office}/skills/`.
+Drop `SKILL.md` folders (or `.md` files) into a scene's skill directory; the whole directory toggles with the scene. `/scene init` scaffolds `~/.pi/agent/scenes/{common,coding,office,pm,research,writing,data}/skills/`.
 
 ## Self-evolution (usage-driven)
 
@@ -169,7 +169,7 @@ Before uninstalling, `/scene off` and prune entries you don't want to keep from 
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test, 13 cases: injection/reclaim + usage/evolution (no TUI needed)
+npm test          # node:test, 14 cases: injection/reclaim + usage/evolution + conflict guards (no TUI needed)
 ```
 
 Tests isolate via the `PI_SCENES_DIR` env var — your real `~/.pi/agent` is never touched.
@@ -269,7 +269,7 @@ pi install git:github.com/Feng-H/pi-scenes
 ```
 
 场景 skill 目录里放 `SKILL.md` 文件夹（或 `.md` 文件）即可，切换场景时整目录启停。
-`/scene init` 会创建 `~/.pi/agent/scenes/{common,coding,office}/skills/` 骨架。
+`/scene init` 会创建 `~/.pi/agent/scenes/{common,coding,office,pm,research,writing,data}/skills/` 骨架。
 
 ## 自进化（用量驱动）
 
@@ -349,7 +349,7 @@ managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packag
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test，核心注入/回收逻辑全覆盖（无需 TUI）
+npm test          # node:test，14 用例：注入/回收 + 用量/进化 + 异写法冲突防护（无需 TUI）
 ```
 
 测试用 `PI_SCENES_DIR` 环境变量隔离基目录，不碰真实 `~/.pi/agent`。
