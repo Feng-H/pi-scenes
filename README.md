@@ -50,7 +50,17 @@ Then `/reload` and `/scene` is live.
 /scene evolve auto # toggle auto-apply at session end (opt-in)
 ```
 
-First run of `/scene` offers to generate the template. Edit it to fit your setup:
+First run of `/scene` offers to generate the template. It ships with **five preset layers** (all packages verified on npm, 2026-09):
+
+| Layer | Preset packages | Why |
+|---|---|---|
+| `common` | `npm:pi-scenes`, `npm:pi-carryover` | the switcher itself + cross-session carryover — always needed |
+| `coding` | `npm:pi-lens`, `npm:pi-subagents`, `npm:pi-git-worktree` | live LSP/lint feedback, delegated sub-agents, parallel worktrees |
+| `office` | `npm:pi-docparser` | PDF/Office document parsing |
+| `pm` | `npm:pi-web-access`, `npm:pi-goal-x` | market/competitor research, goal planning & progress audit |
+| `research` | `npm:pi-web-access`, `npm:pi-subagents` | multi-source search/fetch/PDF/video, parallel multi-angle digging |
+
+Edit it to fit your setup (each scene also gets a skill dir scaffold at `~/.pi/agent/scenes/<name>/skills/`):
 
 ```jsonc
 // ~/.pi/agent/scenes.json
@@ -205,7 +215,17 @@ pi install git:github.com/Feng-H/pi-scenes
 /scene evolve auto # 开关：会话结束自动应用（opt-in）
 ```
 
-首次运行 `/scene` 会询问是否生成模板，生成后编辑场景定义：
+首次运行 `/scene` 会询问是否生成模板，生成后编辑场景定义。模板内置 **五层预设**（包均在 npm 核验存在，2026-09）：
+
+| 层 | 预设 packages | 理由 |
+|---|---|---|
+| `common` | `npm:pi-scenes`、`npm:pi-carryover` | 切换器自身 + 跨会话承接，恒需 |
+| `coding` | `npm:pi-lens`、`npm:pi-subagents`、`npm:pi-git-worktree` | LSP/lint 实时反馈、子代理委派、worktree 并行开发 |
+| `office` | `npm:pi-docparser` | PDF/Office 文档解析 |
+| `pm` | `npm:pi-web-access`、`npm:pi-goal-x` | 竞品/市场调研、目标规划与完成度审计 |
+| `research` | `npm:pi-web-access`、`npm:pi-subagents` | 多源搜索/抓取/PDF/视频，并行多角度深挖 |
+
+每个场景同时生成 skill 目录骨架 `~/.pi/agent/scenes/<名>/skills/`，按需编辑：
 
 ```jsonc
 // ~/.pi/agent/scenes.json

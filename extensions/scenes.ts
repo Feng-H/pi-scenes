@@ -692,25 +692,50 @@ export function makeCore(baseDir: string) {
 		return { tools, commands };
 	}
 
-	/** 生成模板 scenes.json + 场景 skill 目录骨架 */
+	/** 生成模板 scenes.json + 场景 skill 目录骨架（预设均为 npm 真实存在的包，2026-09 核验） */
 	function scaffold(): string[] {
 		const created: string[] = [];
 		const template: ScenesFile = {
 			common: {
-				description: "通用层：所有场景恒加载",
-				packages: ["npm:pi-scenes"],
+				description: "通用层：任何场景都恒加载的基础设施",
+				packages: [
+					"npm:pi-scenes", // 场景切换器自身（常驻才能随时切）
+					"npm:pi-carryover", // 跨会话工作承接（上次干到哪、下次接着干）
+				],
 				skills: ["~/.pi/agent/scenes/common/skills"],
 			},
 			scenes: {
 				coding: {
-					description: "写代码：开发向扩展与 skill",
-					packages: [],
+					description: "写代码：实时代码反馈、子代理委派、并行分支",
+					packages: [
+					"npm:pi-lens", // LSP/linter/格式化实时代码反馈
+					"npm:pi-subagents", // 单代理委派 + 脚本化多代理工作流
+					"npm:pi-git-worktree", // git worktree 并行开发
+					],
 					skills: ["~/.pi/agent/scenes/coding/skills"],
 				},
 				office: {
 					description: "办公：文档处理与日常事务",
-					packages: [],
+					packages: [
+					"npm:pi-docparser", // PDF/Office 文档解析抽取
+					],
 					skills: ["~/.pi/agent/scenes/office/skills"],
+				},
+				pm: {
+					description: "产品经理：竞品调研、目标规划与需求跟踪",
+					packages: [
+					"npm:pi-web-access", // 网页搜索/抓取/PDF/YouTube（竞品与市场调研）
+					"npm:pi-goal-x", // /goal 目标规划 + 独立完成度审计（roadmap/需求跟踪）
+					],
+					skills: ["~/.pi/agent/scenes/pm/skills"],
+				},
+				research: {
+					description: "咨询调研：多源检索、并行多角度深挖",
+					packages: [
+					"npm:pi-web-access", // 搜索/URL 抓取/PDF/视频理解（调研核心）
+					"npm:pi-subagents", // 多角度并行调研（每个子代理一源）
+					],
+					skills: ["~/.pi/agent/scenes/research/skills"],
 				},
 			},
 		};
@@ -718,7 +743,7 @@ export function makeCore(baseDir: string) {
 			writeJson(paths.scenesFile, template);
 			created.push(paths.scenesFile);
 		}
-		for (const s of ["common", "coding", "office"]) {
+		for (const s of ["common", "coding", "office", "pm", "research"]) {
 			const dir = path.join(paths.scenesRoot, s, "skills");
 			if (!fs.existsSync(dir)) {
 				fs.mkdirSync(dir, { recursive: true });

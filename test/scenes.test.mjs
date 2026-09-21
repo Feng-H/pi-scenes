@@ -48,12 +48,20 @@ const CFG = {
 	},
 };
 
-test("scaffold 生成模板与目录", () => {
+test("scaffold 生成模板与目录（含 pm/research 预设场景）", () => {
 	const { core } = tmpBase();
 	const created = core.scaffold();
 	assert.ok(created.some((c) => c.endsWith("scenes.json")));
-	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "coding", "skills")));
-	assert.ok(!fs.existsSync(path.join(core.paths.scenesRoot, "office", "skills", "SKILL.md")));
+	for (const s of ["common", "coding", "office", "pm", "research"]) {
+		assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, s, "skills")), s);
+	}
+	// 预设包均为真实 spec
+	const cfg = core.loadScenes();
+	assert.deepEqual(cfg.common.packages, ["npm:pi-scenes", "npm:pi-carryover"]);
+	assert.ok(cfg.scenes.pm.packages.includes("npm:pi-web-access"));
+	assert.ok(cfg.scenes.research.packages.includes("npm:pi-subagents"));
+	assert.ok(cfg.scenes.coding.packages.includes("npm:pi-lens"));
+	assert.ok(cfg.scenes.office.packages.includes("npm:pi-docparser"));
 	// 二次 scaffold 不覆盖
 	assert.equal(core.scaffold().length, 0);
 });
