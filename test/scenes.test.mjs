@@ -48,20 +48,22 @@ const CFG = {
 	},
 };
 
-test("scaffold 生成模板与目录（含 pm/research 预设场景）", () => {
+test("scaffold 生成模板与目录（含 7 个预设场景）", () => {
 	const { core } = tmpBase();
 	const created = core.scaffold();
 	assert.ok(created.some((c) => c.endsWith("scenes.json")));
-	for (const s of ["common", "coding", "office", "pm", "research"]) {
+	for (const s of ["common", "coding", "office", "pm", "research", "writing", "data"]) {
 		assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, s, "skills")), s);
 	}
 	// 预设包均为真实 spec
 	const cfg = core.loadScenes();
 	assert.deepEqual(cfg.common.packages, ["npm:pi-scenes", "npm:pi-carryover"]);
-	assert.ok(cfg.scenes.pm.packages.includes("npm:pi-web-access"));
+	assert.ok(cfg.scenes.pm.packages.includes("npm:@juicesharp/rpiv-todo"));
 	assert.ok(cfg.scenes.research.packages.includes("npm:pi-subagents"));
 	assert.ok(cfg.scenes.coding.packages.includes("npm:pi-lens"));
 	assert.ok(cfg.scenes.office.packages.includes("npm:pi-docparser"));
+	assert.ok(cfg.scenes.writing.packages.includes("npm:pi-web-access"));
+	assert.ok(cfg.scenes.data.packages.includes("npm:pi-mcp-adapter"));
 	// 二次 scaffold 不覆盖
 	assert.equal(core.scaffold().length, 0);
 });

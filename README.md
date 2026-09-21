@@ -50,15 +50,17 @@ Then `/reload` and `/scene` is live.
 /scene evolve auto # toggle auto-apply at session end (opt-in)
 ```
 
-First run of `/scene` offers to generate the template. It ships with **five preset layers** (all packages verified on npm, 2026-09):
+First run of `/scene` offers to generate the template. It ships with **seven preset scenes + common** (all packages verified on npm, 2026-09):
 
 | Layer | Preset packages | Why |
 |---|---|---|
 | `common` | `npm:pi-scenes`, `npm:pi-carryover` | the switcher itself + cross-session carryover — always needed |
 | `coding` | `npm:pi-lens`, `npm:pi-subagents`, `npm:pi-git-worktree` | live LSP/lint feedback, delegated sub-agents, parallel worktrees |
 | `office` | `npm:pi-docparser` | PDF/Office document parsing |
-| `pm` | `npm:pi-web-access`, `npm:pi-goal-x` | market/competitor research, goal planning & progress audit |
+| `pm` | `npm:pi-web-access`, `npm:pi-goal-x`, `npm:@juicesharp/rpiv-todo` | market/competitor research, goal planning & audit, live todo overlay |
 | `research` | `npm:pi-web-access`, `npm:pi-subagents` | multi-source search/fetch/PDF/video, parallel multi-angle digging |
+| `writing` | `npm:pi-web-access` | source gathering & fact-checking with citations |
+| `data` | `npm:pi-docparser`, `npm:pi-mcp-adapter` | table extraction, connect any MCP server (DB/BI) |
 
 Edit it to fit your setup (each scene also gets a skill dir scaffold at `~/.pi/agent/scenes/<name>/skills/`):
 
@@ -215,15 +217,17 @@ pi install git:github.com/Feng-H/pi-scenes
 /scene evolve auto # 开关：会话结束自动应用（opt-in）
 ```
 
-首次运行 `/scene` 会询问是否生成模板，生成后编辑场景定义。模板内置 **五层预设**（包均在 npm 核验存在，2026-09）：
+首次运行 `/scene` 会询问是否生成模板，生成后编辑场景定义。模板内置 **七个预设场景 + 通用层**（包均在 npm 核验存在，2026-09）：
 
 | 层 | 预设 packages | 理由 |
 |---|---|---|
 | `common` | `npm:pi-scenes`、`npm:pi-carryover` | 切换器自身 + 跨会话承接，恒需 |
 | `coding` | `npm:pi-lens`、`npm:pi-subagents`、`npm:pi-git-worktree` | LSP/lint 实时反馈、子代理委派、worktree 并行开发 |
 | `office` | `npm:pi-docparser` | PDF/Office 文档解析 |
-| `pm` | `npm:pi-web-access`、`npm:pi-goal-x` | 竞品/市场调研、目标规划与完成度审计 |
+| `pm` | `npm:pi-web-access`、`npm:pi-goal-x`、`npm:@juicesharp/rpiv-todo` | 竞品/市场调研、目标规划与完成度审计、需求/任务清单 overlay |
 | `research` | `npm:pi-web-access`、`npm:pi-subagents` | 多源搜索/抓取/PDF/视频，并行多角度深挖 |
+| `writing` | `npm:pi-web-access` | 素材检索与事实核查（引用溯源） |
+| `data` | `npm:pi-docparser`、`npm:pi-mcp-adapter` | 表格结构化抽取、接任意 MCP server（数据库/BI） |
 
 每个场景同时生成 skill 目录骨架 `~/.pi/agent/scenes/<名>/skills/`，按需编辑：
 

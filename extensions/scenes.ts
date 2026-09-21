@@ -726,6 +726,7 @@ export function makeCore(baseDir: string) {
 					packages: [
 					"npm:pi-web-access", // 网页搜索/抓取/PDF/YouTube（竞品与市场调研）
 					"npm:pi-goal-x", // /goal 目标规划 + 独立完成度审计（roadmap/需求跟踪）
+					"npm:@juicesharp/rpiv-todo", // 需求/任务清单实时 overlay（抗 /reload 与压缩）
 					],
 					skills: ["~/.pi/agent/scenes/pm/skills"],
 				},
@@ -737,13 +738,28 @@ export function makeCore(baseDir: string) {
 					],
 					skills: ["~/.pi/agent/scenes/research/skills"],
 				},
+				writing: {
+					description: "写作：素材检索、事实核查、文体打磨",
+					packages: [
+					"npm:pi-web-access", // 素材检索与事实核查（引用溯源）
+					],
+					skills: ["~/.pi/agent/scenes/writing/skills"],
+				},
+				data: {
+					description: "数据分析：表格抽取、MCP 接数据库/BI",
+					packages: [
+					"npm:pi-docparser", // Excel/CSV/PDF 表格结构化抽取
+					"npm:pi-mcp-adapter", // 接任意 MCP server（数据库/BI/内部数据服务）
+					],
+					skills: ["~/.pi/agent/scenes/data/skills"],
+				},
 			},
 		};
 		if (!fs.existsSync(paths.scenesFile)) {
 			writeJson(paths.scenesFile, template);
 			created.push(paths.scenesFile);
 		}
-		for (const s of ["common", "coding", "office", "pm", "research"]) {
+		for (const s of ["common", "coding", "office", "pm", "research", "writing", "data"]) {
 			const dir = path.join(paths.scenesRoot, s, "skills");
 			if (!fs.existsSync(dir)) {
 				fs.mkdirSync(dir, { recursive: true });
