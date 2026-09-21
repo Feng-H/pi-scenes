@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { makeCore } from "../extensions/scenes.ts";
+import { makeCore, computeProposals, applyProposals } from "../extensions/scenes.ts";
 
 function tmpBase() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-scenes-test-"));
@@ -168,4 +168,133 @@ test("settings 备份文件生成", () => {
 	writeSettings(core, { packages: ["npm:pi-anywhere"] });
 	core.applyToSettings(core.computeTarget("coding", CFG), "coding", undefined);
 	assert.ok(fs.existsSync(`${core.paths.settingsFile}.scenes-bak`));
+});
+
+// ── v0.2：用量记账 / 归因 / 进化 ───────────────────────
+
+function writeScenes(core, cfg) {
+	fs.writeFileSync(core.paths.scenesFile, JSON.stringify(cfg, null, 2));
+}
+
+test("buildToolMap：扫描 npm 安装目录归因工具与命令", () => {
+	const { core } = tmpBase();
+	const pkgDir = path.join(core.paths.npmDir, "node_modules", "pi-fake", "extensions");
+	fs.mkdirSync(pkgDir, { recursive: true });
+	fs.writeFileSync(
+		path.join(pkgDir, "index.ts"),
+		`pi.registerTool({ name: "fake_tool", async execute() {} });
+pi.registerCommand("fake-cmd", { handler() {} });
+`,
+	);
+	const { tools, commands } = core.buildToolMap();
+	assert.equal(tools.get("fake_tool"), "pi-fake");
+	assert.equal(commands.get("fake-cmd"), "pi-fake");
+	// 子目录递归 + 无关目录跳过
+	const sub = path.join(core.paths.npmDir, "node_modules", "pi-deep", "src", "nested");
+	fs.mkdirSync(sub, { recursive: true });
+	fs.writeFileSync(path.join(sub, "deep.ts"), `pi.registerTool({
+	name: "deep_tool",
+});`);
+	assert.equal(core.buildToolMap().tools.get("deep_tool"), "pi-deep");
+});
+
+test("session 记账：begin/record/end 与 unmanaged 观察、streak 结算", () => {
+	const { core } = tmpBase();
+	writeScenes(core, CFG);
+	core.applyToSettings(core.computeTarget("coding", CFG), "coding", undefined);
+
+	// 手工条目 npm:pi-anywhere 在 settings 但不在任何场景定义 → unmanaged
+	core.beginSession("s1.json", ["npm:pi-anywhere"]);
+	let usage = core.loadUsage();
+	assert.equal(usage.perScene["coding"].sessions, 1);
+	assert.equal(usage.unmanagedSeen[JSON.stringify("npm:pi-anywhere")].count, 1);
+
+	// 工具调用归因：some_tool 属于 pi-carryover，在 coding target 中
+	const key = JSON.stringify("npm:pi-carryover");
+	assert.ok(core.recordToolUse("some_tool", new Map([["some_tool", "pi-carryover"]]))) ;
+	usage = core.loadUsage();
+	assert.equal(usage.perResource[key].toolCalls, 1);
+	assert.ok(usage._current.seen.includes(key));
+
+	core.endSession("new"); // 非 reload → 结算：seen 重置 streak
+	usage = core.loadUsage();
+	assert.equal(usage.perResource[key].absentStreak, 0);
+	assert.equal(usage.perResource[key].sessionsSeen, 1);
+
+	// 第二个会话不使用 → streak 1；同文件重复 begin 不计数
+	core.beginSession("s2.json", []);
+	core.beginSession("s2.json", []); // 幂等
+	core.endSession("quit");
+	usage = core.loadUsage();
+	assert.equal(usage.perScene["coding"].sessions, 2);
+	assert.equal(usage.perResource[key].absentStreak, 1);
+	assert.equal(usage._current, undefined);
+});
+
+test("反思记账：skill 子项有用 → 父目录条目 seen 重置 streak", () => {
+	const { core } = tmpBase();
+	writeScenes(core, CFG);
+	core.applyToSettings(core.computeTarget("coding", CFG), "coding", undefined);
+	core.beginSession("s1.json", []);
+	core.endSession("quit"); // coding skills 条目 streak 1
+	let usage = core.loadUsage();
+	const parent = path.join(os.homedir(), ".pi/agent/scenes/coding/skills");
+	assert.equal(usage.perResource[parent].absentStreak, 1);
+
+	core.beginSession("s2.json", []);
+	core.recordReflection([path.join(parent, "wecom")], [path.join(parent, "dead")]);
+	core.endSession("quit");
+	usage = core.loadUsage();
+	assert.equal(usage.perResource[parent].absentStreak, 0); // 反思「用到」重置
+	assert.equal(usage.perResource[path.join(parent, "wecom")].reflections.useful, 1);
+	assert.equal(usage.perResource[path.join(parent, "dead")].reflections.unused, 1);
+});
+
+test("computeProposals：吸收 / 淘汰 / 保护规则", () => {
+	const cfg = {
+		common: { packages: ["npm:pi-anywhere"] },
+		scenes: {
+			coding: { packages: ["npm:pi-hot", "npm:pi-cold", "npm:pi-quiet"], skills: ["~/skills-dead"] },
+		},
+	};
+	const usage = {
+		perScene: {},
+		perResource: {
+			[JSON.stringify("npm:pi-hot")]: { toolCalls: 50, absentStreak: 0 },
+			[JSON.stringify("npm:pi-cold")]: { toolCalls: 9, absentStreak: 20 },
+			[JSON.stringify("npm:pi-quiet")]: { absentStreak: 25 },
+			[JSON.stringify("npm:pi-anywhere")]: { absentStreak: 99 },
+			[expand("~/skills-dead")]: { reflections: { useful: 0, unused: 6 } },
+		},
+		unmanagedSeen: {
+			[JSON.stringify("npm:pi-foo")]: { count: 3, lastSeen: "x", scenes: ["coding"] },
+		},
+	};
+	const hasTools = new Set([JSON.stringify("npm:pi-hot"), JSON.stringify("npm:pi-cold")]);
+	const ps = computeProposals(cfg, usage, { hasTools });
+	assert.ok(ps.some((p) => p.kind === "absorb" && p.scene === "coding" && p.entry === "npm:pi-foo"));
+	assert.ok(ps.some((p) => p.kind === "retire" && p.label === "npm:pi-cold")); // 有信号且连续 20 未用
+	assert.ok(!ps.some((p) => p.label === "npm:pi-quiet")); // 无工具信号 → 保护（command-only）
+	assert.ok(!ps.some((p) => p.label === "npm:pi-anywhere")); // common 层永不淘汰
+	assert.ok(!ps.some((p) => p.label === "npm:pi-hot")); // 在用不淘汰
+	assert.ok(ps.some((p) => p.kind === "retire" && p.skillPath === "~/skills-dead")); // skill 反思淘汰
+	// patience 配置覆盖：30 → pi-cold(20) 不再触发
+	const ps2 = computeProposals({ ...cfg, evolve: { patience: 30 } }, usage, { hasTools });
+	assert.ok(!ps2.some((p) => p.label === "npm:pi-cold"));
+	// 未达吸收阈值（count 1 < 2）不提案
+	const ps3 = computeProposals(cfg, { ...usage, unmanagedSeen: { [JSON.stringify("npm:pi-bar")]: { count: 1, lastSeen: "x", scenes: ["coding"] } } }, { hasTools });
+	assert.ok(!ps3.some((p) => p.entry === "npm:pi-bar"));
+});
+
+test("applyProposals：生成新配置且不动原对象", () => {
+	const cfg = { scenes: { coding: { packages: ["npm:pi-cold"], skills: ["~/skills-dead"] } } };
+	const next = applyProposals(cfg, [
+		{ kind: "absorb", scene: "coding", entry: "npm:pi-foo", reason: "" },
+		{ kind: "retire", scene: "coding", key: JSON.stringify("npm:pi-cold"), label: "npm:pi-cold", reason: "" },
+		{ kind: "retire", scene: "coding", key: "x", label: "~/skills-dead", skillPath: "~/skills-dead", reason: "" },
+	]);
+	assert.deepEqual(next.scenes.coding.packages, ["npm:pi-foo"]);
+	assert.deepEqual(next.scenes.coding.skills, []);
+	assert.deepEqual(cfg.scenes.coding.packages, ["npm:pi-cold"]); // 原 cfg 未被改
+	assert.deepEqual(cfg.scenes.coding.skills, ["~/skills-dead"]);
 });

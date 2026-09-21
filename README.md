@@ -45,6 +45,9 @@ Then `/reload` and `/scene` is live.
 /scene off        # common layer only (scene off)
 /scene status     # show active scene + effective packages/skills
 /scene init       # scaffold scenes.json template + scene skill dirs
+/scene stats      # usage dashboard: sessions, tool calls, reflections
+/scene evolve     # generate & apply evolution proposals (confirm-first)
+/scene evolve auto # toggle auto-apply at session end (opt-in)
 ```
 
 First run of `/scene` offers to generate the template. Edit it to fit your setup:
@@ -76,6 +79,31 @@ First run of `/scene` offers to generate the template. Edit it to fit your setup
 
 Drop `SKILL.md` folders (or `.md` files) into a scene's skill directory; the whole directory toggles with the scene. `/scene init` scaffolds `~/.pi/agent/scenes/{common,coding,office}/skills/`.
 
+## Self-evolution (usage-driven)
+
+Scenes are not static. pi-scenes observes what you actually use and proposes updates:
+
+- **Collect (passive)** — every `tool_call` is attributed to its package (via a static scan of installed sources); packages present in settings but absent from every scene definition are tracked as *absorb candidates*; at each session end a tiny LLM call reflects on which loaded skills were actually useful (a few hundred tokens, 30s timeout, fails silently).
+- **Propose** — `/scene evolve` generates proposals:
+  - **absorb**: an unmanaged package seen in ≥2 sessions joins the scene it was observed in
+  - **retire**: a scene package with zero calls for 20 consecutive sessions (and a tool signal — command-only packages are protected) is proposed for removal; a skill the LLM never found useful (5+ "unused" reflections, 0 "useful") likewise
+  - **protected**: the `common` layer and packages without tool signals (e.g. `/anywhere`-style command-only extensions) are **never** auto-changed
+- **Apply (confirm-first)** — each proposal shows a `scenes.json` diff and asks; accepted edits are backed up (`scenes.json.scenes-bak`) and hot-reloaded. `/scene evolve auto` opts into silent application at session end (changes take effect on the next natural reload).
+
+Tunables live in `scenes.json`:
+
+```jsonc
+{
+  "evolve": {
+    "patience": 20,           // sessions of zero usage before retire
+    "absorbThreshold": 2,     // unmanaged sightings before absorb
+    "skillUnusedThreshold": 5 // "unused" reflections before skill retire
+  }
+}
+```
+
+Usage data: `~/.pi/agent/scenes-usage.json` (machine-local, inert). View anytime with `/scene stats`.
+
 ## How it works
 
 ```
@@ -102,6 +130,7 @@ Drop `SKILL.md` folders (or `.md` files) into a scene's skill directory; the who
 | `scenes.<name>.packages` | accepts `"npm:<pkg>"`, `"git:github.com/u/r"`, local paths, and object form (resource filtering, same grammar as pi settings) |
 | `scenes.<name>.skills` | paths/directories, `~` expanded |
 | `scenes.<name>.extends` | 🧪 inherit a parent scene (union merge + cycle detection) — forward-compatible entry for parent→child hierarchies |
+| `evolve.patience` / `evolve.absorbThreshold` / `evolve.skillUnusedThreshold` | self-evolution tunables (see "Self-evolution") |
 
 ## Rollback
 
@@ -116,7 +145,7 @@ Before uninstalling, `/scene off` and prune entries you don't want to keep from 
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test, full coverage of injection/reclaim logic (no TUI needed)
+npm test          # node:test, 13 cases: injection/reclaim + usage/evolution (no TUI needed)
 ```
 
 Tests isolate via the `PI_SCENES_DIR` env var — your real `~/.pi/agent` is never touched.
@@ -171,6 +200,9 @@ pi install git:github.com/Feng-H/pi-scenes
 /scene off        # 仅保留通用层（关闭场景）
 /scene status     # 查看当前激活 + 生效的 packages/skills 清单
 /scene init       # 生成模板 scenes.json + 场景 skill 目录骨架
+/scene stats      # 用量仪表盘：会话数 / 工具调用 / 反思评分
+/scene evolve     # 生成并应用进化提案（逐条确认）
+/scene evolve auto # 开关：会话结束自动应用（opt-in）
 ```
 
 首次运行 `/scene` 会询问是否生成模板，生成后编辑场景定义：
@@ -203,6 +235,31 @@ pi install git:github.com/Feng-H/pi-scenes
 场景 skill 目录里放 `SKILL.md` 文件夹（或 `.md` 文件）即可，切换场景时整目录启停。
 `/scene init` 会创建 `~/.pi/agent/scenes/{common,coding,office}/skills/` 骨架。
 
+## 自进化（用量驱动）
+
+场景不是静态的。pi-scenes 观察你的实际使用并提议更新：
+
+- **采集（被动，零感知）**——每次 `tool_call` 通过静态扫描安装源码归因到包；settings 里存在但不在任何场景定义的包记为*吸收候选*；每个会话结束用一次小 LLM 调用反思哪些已加载 skill 真正有用（几百 token、30s 超时、失败静默）。
+- **提案**——`/scene evolve` 生成提案：
+  - **吸收**：未纳管的包在 ≥2 个会话中出现 → 提议加入观察到的场景
+  - **淘汰**：场景包连续 20 个会话零调用（且必须有过工具信号——纯命令包受保护）→ 提议移出；skill 反思 5 次以上「未用到」且 0 次「有用」→ 提议移出
+  - **保护**：`common` 通用层与无工具信号的包（如只有 `/anywhere` 命令的扩展）**永不被自动变更**，只能用户手动改
+- **应用（确认优先）**——每条提案展示 `scenes.json` diff 并逐条确认；接受后自动备份（`scenes.json.scenes-bak`）并热重载。`/scene evolve auto` 开启会话结束静默应用（下次自然重载生效）。
+
+阈值在 `scenes.json` 可调：
+
+```jsonc
+{
+  "evolve": {
+    "patience": 20,           // 连续零调用会话数 → 淘汰
+    "absorbThreshold": 2,     // 未纳管出现次数 → 吸收
+    "skillUnusedThreshold": 5 // skill 反思未用到次数 → 淘汰
+  }
+}
+```
+
+用量数据：`~/.pi/agent/scenes-usage.json`（本机局部、惰性）。随时 `/scene stats` 查看。
+
 ## 工作原理
 
 ```
@@ -229,6 +286,7 @@ pi install git:github.com/Feng-H/pi-scenes
 | `scenes.<name>.packages` | 支持 `"npm:<pkg>"`、`"git:github.com/u/r"`、本地路径字符串，及 object form（资源过滤，同 pi settings 规范） |
 | `scenes.<name>.skills` | 路径/目录数组，支持 `~` 展开 |
 | `scenes.<name>.extends` | 🧪 继承父场景（union 合并，带环检测）——「主场景→子场景」层级的前向兼容入口 |
+| `evolve.patience` / `evolve.absorbThreshold` / `evolve.skillUnusedThreshold` | 自进化阈值（见「自进化」节） |
 
 ## 回退方案
 

@@ -24,10 +24,20 @@
  *   /scene off|none     仅保留通用层（关闭场景）
  *   /scene status       显示当前激活与生效资源
  *   /scene init         生成模板 scenes.json 与场景 skill 目录骨架
+ *   /scene stats        用量仪表盘（会话数/工具调用/反思评分/未纳管观察）
+ *   /scene evolve       生成进化提案并逐条确认应用（备份 + 热重载）
+ *   /scene evolve auto  开关：会话结束自动应用进化（opt-in，不动 common/无工具包）
+ *
+ * 自进化（v0.2）：
+ *   采集：tool_call 归因（静态扫描安装源码建 tool→pkg 表）+
+ *         settings 未纳管条目观察 + 会话结束 LLM 反思 skill 有用性
+ *   提案：吸收（未纳管 ≥2 次）→ 淘汰（连续 20 会话零调用且有过工具信号）
+ *   保护：common 层与无工具信号的包（command-only）永不自动变更
  *
  * 文件：
- *   ~/.pi/agent/scenes.json        场景定义（用户编辑）
+ *   ~/.pi/agent/scenes.json        场景定义（用户编辑；含 evolve 阈值配置）
  *   ~/.pi/agent/scenes-state.json  激活状态 + managed 追踪（本扩展维护）
+ *   ~/.pi/agent/scenes-usage.json  用量记账与自进化数据（本扩展维护）
  *   ~/.pi/agent/settings.json      pi 全局设置（仅动 packages/skills 两个数组）
  *   ~/.pi/agent/scenes/<名>/skills 各场景专属 skill 目录（约定，可自由改路径）
  *
@@ -54,10 +64,43 @@ export interface SceneDef {
 	skills?: string[];
 }
 
+export interface EvolveConfig {
+	/** 连续多少个会话零调用后提议淘汰（默认 20） */
+	patience?: number;
+	/** 未纳管条目出现多少次后提议吸收（默认 2） */
+	absorbThreshold?: number;
+	/** skill 反思多少次「未用到」后提议淘汰（默认 5） */
+	skillUnusedThreshold?: number;
+}
+
 export interface ScenesFile {
 	common?: SceneDef;
 	scenes?: Record<string, SceneDef>;
+	/** 自进化配置（v0.2） */
+	evolve?: EvolveConfig;
 }
+
+export interface ResourceUsage {
+	toolCalls?: number;
+	lastUsed?: string;
+	sessionsSeen?: number;
+	absentStreak?: number;
+	reflections?: { useful: number; unused: number };
+}
+
+export interface UsageFile {
+	autoEvolve?: boolean;
+	perScene: Record<string, { sessions: number; lastActive: string }>;
+	perResource: Record<string, ResourceUsage>;
+	/** 在 settings 中出现但不在任何场景定义的条目（吸收候选） */
+	unmanagedSeen: Record<string, { count: number; lastSeen: string; scenes: string[] }>;
+	/** 当前会话记账（跨 reload 存续）：seen = 本会话用过的资源 key */
+	_current?: { file: string; scene: string | null; seen: string[] };
+}
+
+export type Proposal =
+	| { kind: "absorb"; scene: string; entry: PackageEntry; reason: string }
+	| { kind: "retire"; scene: string; key: string; label: string; skillPath?: string; reason: string };
 
 export interface SceneState {
 	/** 当前激活场景名；null = 仅通用层 */
@@ -100,6 +143,177 @@ function sameEntry(a: unknown, b: unknown): boolean {
 function removeFrom<T>(arr: T[] | undefined, targets: T[]): T[] {
 	if (!arr) return [];
 	return arr.filter((item) => !targets.some((t) => sameEntry(item, t)));
+}
+
+function specOf(e: PackageEntry): string {
+	return typeof e === "string" ? e : e.source;
+}
+
+/** 包条目的身份候选（用于工具归因匹配） */
+function packageIdentity(entry: PackageEntry): string[] {
+	const spec = typeof entry === "string" ? entry : entry?.source ?? "";
+	if (!spec) return [];
+	const loc = specLocation(spec);
+	if (loc.kind === "npm" && loc.npmName) return [loc.npmName];
+	if (loc.kind === "git" && loc.gitDir) return [path.basename(loc.gitDir)];
+	if (loc.kind === "local" && loc.localPath) return [path.basename(expandHome(loc.localPath))];
+	return [];
+}
+
+/** skill 名：SKILL.md frontmatter name → 一级标题 → 文件名 */
+function skillNameOf(file: string): string {
+	try {
+		const head = fs.readFileSync(file, "utf8").slice(0, 4000);
+		const m = head.match(/^name:\s*["']?([^"'\n#]+?)["']?\s*$/m);
+		if (m) return m[1].trim();
+		const t = head.match(/^#\s+(.+)$/m);
+		if (t) return t[1].trim();
+	} catch {}
+	return path.basename(file).replace(/\.md$/i, "");
+}
+
+/** 展开场景 skill 条目为单个 skill 清单（目录→子 SKILL.md / .md 文件） */
+function listSkillChildren(skillPaths: string[]): { id: string; label: string }[] {
+	const out: { id: string; label: string }[] = [];
+	for (const p of skillPaths) {
+		let stt: fs.Stats;
+		try {
+			stt = fs.statSync(p);
+		} catch {
+			continue;
+		}
+		if (stt.isFile()) {
+			if (/\.md$/i.test(p)) out.push({ id: p, label: skillNameOf(p) });
+			continue;
+		}
+		let ents: fs.Dirent[];
+		try {
+			ents = fs.readdirSync(p, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const e of ents) {
+			if (e.isDirectory()) {
+				const sk = path.join(p, e.name, "SKILL.md");
+				if (fs.existsSync(sk)) out.push({ id: sk, label: skillNameOf(sk) });
+			} else if (/\.md$/i.test(e.name) && !/^SKILL\.md$/i.test(e.name)) {
+				out.push({ id: path.join(p, e.name), label: skillNameOf(path.join(p, e.name)) });
+			}
+		}
+	}
+	return out;
+}
+
+function extractText(resp: unknown): string {
+	const r = resp as any;
+	const c = r?.choices?.[0]?.message?.content ?? r?.content ?? r?.text ?? "";
+	if (typeof c === "string") return c;
+	if (Array.isArray(c)) return c.filter((x: any) => x?.type === "text").map((x: any) => x.text).join("");
+	return "";
+}
+
+function parseJsonLoose(text: string): any | null {
+	const stripped = text.replace(/```(?:json)?/g, "");
+	const start = stripped.indexOf("{");
+	const end = stripped.lastIndexOf("}");
+	if (start < 0 || end <= start) return null;
+	try {
+		return JSON.parse(stripped.slice(start, end + 1));
+	} catch {
+		return null;
+	}
+}
+
+/** 递归收集 JS/TS 源文件（限量，避免大包扫描过久） */
+function collectJsFiles(root: string, out: string[], budget: { n: number }): void {
+	if (budget.n <= 0) return;
+	let ents: fs.Dirent[];
+	try {
+		ents = fs.readdirSync(root, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	const subdirs: string[] = [];
+	for (const e of ents) {
+		if (budget.n <= 0) return;
+		if (e.isFile() && /\.(ts|js|mjs|cjs)$/.test(e.name)) {
+			out.push(path.join(root, e.name));
+			budget.n -= 1;
+		} else if (e.isDirectory() && !["node_modules", ".git"].includes(e.name)) {
+			subdirs.push(path.join(root, e.name));
+		}
+	}
+	for (const d of subdirs) {
+		collectJsFiles(d, out, budget);
+		if (budget.n <= 0) return;
+	}
+}
+
+/**
+ * 进化提案（纯函数）：
+ * - 吸收：unmanaged 条目出现 ≥ absorbThreshold 次 → 提议加入观察到的场景
+ * - 淘汰：场景层包 absentStreak ≥ patience 且有工具信号（toolCalls>0 或归因表有工具）→ 提议移出
+ * - 保护：common 层永不淘汰；无任何工具信号的包（command-only，如 pi-anywhere）永不淘汰
+ * - skill：反思 useful==0 且 unused ≥ skillUnusedThreshold → 提议移出
+ */
+export function computeProposals(
+	cfg: ScenesFile,
+	usage: UsageFile,
+	opts: { patience?: number; absorbThreshold?: number; skillUnusedThreshold?: number; hasTools?: Set<string> } = {},
+): Proposal[] {
+	const patience = opts.patience ?? cfg.evolve?.patience ?? 20;
+	const absorbThreshold = opts.absorbThreshold ?? cfg.evolve?.absorbThreshold ?? 2;
+	const skillUnused = opts.skillUnusedThreshold ?? cfg.evolve?.skillUnusedThreshold ?? 5;
+	const proposals: Proposal[] = [];
+
+	for (const [key, u] of Object.entries(usage.unmanagedSeen ?? {})) {
+		if (u.count < absorbThreshold) continue;
+		const scene = u.scenes[u.scenes.length - 1];
+		if (!scene || !cfg.scenes?.[scene]) continue;
+		let entry: PackageEntry;
+		try {
+			entry = JSON.parse(key) as PackageEntry;
+		} catch {
+			continue;
+		}
+		proposals.push({ kind: "absorb", scene, entry, reason: `${u.count} 个会话在场但不在任何场景定义` });
+	}
+
+	for (const [scene, def] of Object.entries(cfg.scenes ?? {})) {
+		for (const e of def.packages ?? []) {
+			const key = canonical(e);
+			const r = usage.perResource?.[key];
+			const signalCapable = (r?.toolCalls ?? 0) > 0 || opts.hasTools?.has(key);
+			if (!r || !signalCapable) continue;
+			if ((r.absentStreak ?? 0) >= patience) {
+				proposals.push({ kind: "retire", scene, key, label: specOf(e), reason: `连续 ${r.absentStreak} 个会话零调用（累计 ${r.toolCalls ?? 0} 次）` });
+			}
+		}
+		for (const p of def.skills ?? []) {
+			const rl = usage.perResource?.[expandHome(p)]?.reflections;
+			if (!rl || rl.useful > 0 || rl.unused < skillUnused) continue;
+			proposals.push({ kind: "retire", scene, key: expandHome(p), label: p, skillPath: p, reason: `反思 ${rl.unused} 次均未用到` });
+		}
+	}
+	return proposals;
+}
+
+/** 应用提案（纯函数）：返回新 cfg，不改原对象 */
+export function applyProposals(cfg: ScenesFile, proposals: Proposal[]): ScenesFile {
+	const next: ScenesFile = structuredClone(cfg);
+	next.scenes ??= {};
+	for (const p of proposals) {
+		const def = (next.scenes[p.scene] ??= {});
+		if (p.kind === "absorb") {
+			def.packages ??= [];
+			if (!def.packages.some((x) => sameEntry(x, p.entry))) def.packages.push(p.entry);
+		} else if (p.skillPath) {
+			def.skills = (def.skills ?? []).filter((s) => s !== p.skillPath);
+		} else {
+			def.packages = (def.packages ?? []).filter((e) => canonical(e) !== p.key);
+		}
+	}
+	return next;
 }
 
 function readJson<T>(file: string, fallback: T): T {
@@ -150,6 +364,7 @@ export interface CorePaths {
 	baseDir: string;
 	scenesFile: string;
 	stateFile: string;
+	usageFile: string;
 	settingsFile: string;
 	scenesRoot: string; // ~/.pi/agent/scenes（场景 skill 目录约定根）
 	npmDir: string; // ~/.pi/agent/npm
@@ -161,6 +376,7 @@ export function makeCore(baseDir: string) {
 		baseDir,
 		scenesFile: path.join(baseDir, "scenes.json"),
 		stateFile: path.join(baseDir, "scenes-state.json"),
+		usageFile: path.join(baseDir, "scenes-usage.json"),
 		settingsFile: path.join(baseDir, "settings.json"),
 		scenesRoot: path.join(baseDir, "scenes"),
 		npmDir: path.join(baseDir, "npm"),
@@ -188,6 +404,21 @@ export function makeCore(baseDir: string) {
 
 	function saveState(st: SceneState): void {
 		writeJson(paths.stateFile, st);
+	}
+
+	function loadUsage(): UsageFile {
+		const u = readJson<Partial<UsageFile>>(paths.usageFile, {});
+		return {
+			autoEvolve: u.autoEvolve ?? false,
+			perScene: u.perScene ?? {},
+			perResource: u.perResource ?? {},
+			unmanagedSeen: u.unmanagedSeen ?? {},
+			_current: u._current,
+		};
+	}
+
+	function saveUsage(usage: UsageFile): void {
+		writeJson(paths.usageFile, usage);
 	}
 
 	/** 解析场景（沿 extends 链 union 合并，带环检测）——主场景/子场景的落点 */
@@ -308,6 +539,159 @@ export function makeCore(baseDir: string) {
 		return result;
 	}
 
+	/** 用量记账：新会话开始（session_file 变化才计数；reload 同文件不重复计） */
+	function beginSession(sessionFile: string | null, settingsPackages: PackageEntry[] | undefined): void {
+		const st = loadState();
+		const usage = loadUsage();
+		const file = sessionFile ?? "ephemeral";
+		if (usage._current?.file === file) return;
+		const now = new Date().toISOString();
+		if (st.active) {
+			const s = (usage.perScene[st.active] ??= { sessions: 0, lastActive: now });
+			s.sessions += 1;
+			s.lastActive = now;
+		}
+		// 未纳管观察：在 settings 但不在 target 且不在任何场景定义 → 吸收候选
+		const cfg = loadScenes();
+		const target = computeTarget(st.active, cfg);
+		const definedAnywhere: PackageEntry[] = [
+			...(cfg.common?.packages ?? []),
+			...Object.values(cfg.scenes ?? {}).flatMap((d) => d.packages ?? []),
+		];
+		for (const e of settingsPackages ?? []) {
+			if (target.packages.some((t) => sameEntry(t, e))) continue;
+			if (definedAnywhere.some((t) => sameEntry(t, e))) continue;
+			const key = canonical(e);
+			const u = (usage.unmanagedSeen[key] ??= { count: 0, lastSeen: now, scenes: [] });
+			u.count += 1;
+			u.lastSeen = now;
+			if (st.active && !u.scenes.includes(st.active)) u.scenes.push(st.active);
+		}
+		usage._current = { file, scene: st.active, seen: [] };
+		saveUsage(usage);
+	}
+
+	/** 工具调用归因记账：toolName → 包 → 若在当前 target 中则计数并标记本会话 seen */
+	function recordToolUse(toolName: string, toolMap: Map<string, string>): boolean {
+		const pkg = toolMap.get(toolName);
+		if (!pkg) return false;
+		const st = loadState();
+		const cfg = loadScenes();
+		const target = computeTarget(st.active, cfg);
+		const entry = target.packages.find((e) => packageIdentity(e).includes(pkg));
+		if (!entry) return false;
+		const key = canonical(entry);
+		const usage = loadUsage();
+		const r = (usage.perResource[key] ??= {});
+		r.toolCalls = (r.toolCalls ?? 0) + 1;
+		r.lastUsed = new Date().toISOString();
+		if (usage._current && !usage._current.seen.includes(key)) usage._current.seen.push(key);
+		saveUsage(usage);
+		return true;
+	}
+
+	/** 反思记账：skill 子项有用/无用计数，用到则父目录条目标记 seen（重置 streak） */
+	function recordReflection(used: string[], unused: string[]): void {
+		const st = loadState();
+		const cfg = loadScenes();
+		const target = computeTarget(st.active, cfg);
+		const usage = loadUsage();
+		const now = new Date().toISOString();
+		const markParent = (id: string) => {
+			const parent = target.skills.find((p) => id === p || id.startsWith(p + path.sep));
+			if (parent && usage._current && !usage._current.seen.includes(parent)) usage._current.seen.push(parent);
+		};
+		for (const id of used) {
+			const r = (usage.perResource[id] ??= {});
+			r.reflections ??= { useful: 0, unused: 0 };
+			r.reflections.useful += 1;
+			r.lastUsed = now;
+			markParent(id);
+		}
+		for (const id of unused) {
+			const r = (usage.perResource[id] ??= {});
+			r.reflections ??= { useful: 0, unused: 0 };
+			r.reflections.unused += 1;
+		}
+		saveUsage(usage);
+	}
+
+	/** 会话结束：结算 absentStreak（reload 不结算，会话仍在继续） */
+	function endSession(reason: string): void {
+		if (reason === "reload") return;
+		const st = loadState();
+		const cfg = loadScenes();
+		const target = computeTarget(st.active, cfg);
+		const usage = loadUsage();
+		const seen = usage._current?.seen ?? [];
+		const keys = [...target.packages.map((e) => canonical(e)), ...target.skills];
+		for (const key of keys) {
+			const r = (usage.perResource[key] ??= {});
+			if (seen.includes(key)) {
+				r.absentStreak = 0;
+				r.sessionsSeen = (r.sessionsSeen ?? 0) + 1;
+			} else {
+				r.absentStreak = (r.absentStreak ?? 0) + 1;
+			}
+		}
+		usage._current = undefined;
+		saveUsage(usage);
+	}
+
+	/** 静态扫描安装目录，建 tool/command → 包名归因表 */
+	function buildToolMap(): { tools: Map<string, string>; commands: Map<string, string> } {
+		const tools = new Map<string, string>();
+		const commands = new Map<string, string>();
+		const roots: Array<{ dir: string; name: string }> = [];
+		const nm = path.join(paths.npmDir, "node_modules");
+		if (fs.existsSync(nm)) {
+			for (const e of fs.readdirSync(nm, { withFileTypes: true })) {
+				if (e.isDirectory() && e.name.startsWith("@")) {
+					for (const c of fs.readdirSync(path.join(nm, e.name), { withFileTypes: true })) {
+						if (c.isDirectory()) roots.push({ dir: path.join(nm, e.name, c.name), name: `${e.name}/${c.name}` });
+					}
+				} else if (e.isDirectory()) {
+					roots.push({ dir: path.join(nm, e.name), name: e.name });
+				}
+			}
+		}
+		const walkGit = (dir: string, depth: number): void => {
+			if (depth > 4) return;
+			let ents: fs.Dirent[];
+			try {
+				ents = fs.readdirSync(dir, { withFileTypes: true });
+			} catch {
+				return;
+			}
+			if (ents.some((e) => e.isFile() && e.name === "package.json")) {
+				roots.push({ dir, name: path.basename(dir) });
+				return;
+			}
+			for (const e of ents) if (e.isDirectory() && !e.name.startsWith(".")) walkGit(path.join(dir, e.name), depth + 1);
+		};
+		if (fs.existsSync(paths.gitRoot)) walkGit(paths.gitRoot, 0);
+
+		for (const root of roots) {
+			const files: string[] = [];
+			collectJsFiles(root.dir, files, { n: 60 });
+			for (const f of files) {
+				let src: string;
+				try {
+					src = fs.readFileSync(f, "utf8");
+				} catch {
+					continue;
+				}
+			for (const m of src.matchAll(/registerTool\s*\(\s*\{[\s\S]{0,600}?name\s*:\s*["'`]([^"'`]+)["'`]/g)) {
+					if (!tools.has(m[1])) tools.set(m[1], root.name);
+			}
+			for (const m of src.matchAll(/registerCommand\s*\(\s*["'`]([^"'`]+)["'`]/g)) {
+					if (!commands.has(m[1])) commands.set(m[1], root.name);
+			}
+			}
+		}
+		return { tools, commands };
+	}
+
 	/** 生成模板 scenes.json + 场景 skill 目录骨架 */
 	function scaffold(): string[] {
 		const created: string[] = [];
@@ -350,10 +734,17 @@ export function makeCore(baseDir: string) {
 		saveScenes,
 		loadState,
 		saveState,
+		loadUsage,
+		saveUsage,
 		resolveScene,
 		computeTarget,
 		isPackageInstalled,
 		applyToSettings,
+		beginSession,
+		recordToolUse,
+		recordReflection,
+		endSession,
+		buildToolMap,
 		scaffold,
 	};
 }
@@ -362,10 +753,6 @@ export function makeCore(baseDir: string) {
 
 const PICKER_OFF = "∅  仅通用层（关闭场景）";
 const PICKER_CANCEL = "—— 取消";
-
-function specOf(e: PackageEntry): string {
-	return typeof e === "string" ? e : e.source;
-}
 
 export default function (pi: ExtensionAPI) {
 	const baseDir = process.env.PI_SCENES_DIR || path.join(os.homedir(), ".pi", "agent");
@@ -420,7 +807,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("scene", {
 		title: "场景切换",
-		description: "通用层+场景 一键切换 extension/skill（/scene、/scene <name>、/scene off、/scene status、/scene init）",
+		description: "通用层+场景 一键切换 extension/skill（/scene、/scene <name>、/scene off、/scene status、/scene init、/scene stats、/scene evolve）",
 		handler: async (args: string, ctx: any) => {
 			const arg = (args ?? "").trim();
 
@@ -458,6 +845,29 @@ export default function (pi: ExtensionAPI) {
 					`可用场景：${Object.keys(cfg.scenes ?? {}).join(", ") || "—"}`,
 				];
 				ctx.ui.notify(lines.join("\n"), "info");
+				return;
+			}
+
+			if (arg === "stats") {
+				showStats(ctx);
+				return;
+			}
+
+			if (arg === "evolve auto") {
+				const usage = core.loadUsage();
+				usage.autoEvolve = !usage.autoEvolve;
+				core.saveUsage(usage);
+				ctx.ui.notify(
+						usage.autoEvolve
+							? "自动进化已开启：会话结束自动应用吸收/淘汰（不动 common 与无工具信号的包；变更下次重载生效）"
+							: "自动进化已关闭",
+					"info",
+				);
+				return;
+			}
+
+			if (arg === "evolve") {
+				await runEvolve(ctx);
 				return;
 			}
 
@@ -503,5 +913,182 @@ export default function (pi: ExtensionAPI) {
 			}
 			await doSwitch(ctx, name);
 		},
+	});
+
+	// ── v0.2：用量采集与自进化 ──────────────────────────────
+
+	let toolMapCache: { at: number; value: { tools: Map<string, string>; commands: Map<string, string> } } | null = null;
+	function getToolMap() {
+		if (toolMapCache && Date.now() - toolMapCache.at < 5 * 60_000) return toolMapCache.value;
+		const value = core.buildToolMap();
+		toolMapCache = { at: Date.now(), value };
+		return value;
+	}
+
+	function hasToolsForTarget(): Set<string> {
+		const cfg = core.loadScenes();
+		const st = core.loadState();
+		const target = core.computeTarget(st.active, cfg);
+		const owners = new Set(getToolMap().tools.values());
+		return new Set(target.packages.filter((e) => packageIdentity(e).some((id) => owners.has(id))).map((e) => canonical(e)));
+	}
+
+	function backupScenes(): void {
+		try {
+			if (fs.existsSync(core.paths.scenesFile)) fs.copyFileSync(core.paths.scenesFile, `${core.paths.scenesFile}.scenes-bak`);
+		} catch {}
+	}
+
+	function shortLabel(k: string): string {
+		try {
+			const v = JSON.parse(k);
+			if (typeof v === "string") return v;
+			if (v && typeof v === "object" && v.source) return v.source;
+		} catch {}
+		return k.split(path.sep).slice(-2).join("/");
+	}
+
+	function showStats(ctx: any): void {
+		const usage = core.loadUsage();
+		const lines: string[] = [];
+		const scenes = Object.entries(usage.perScene);
+		lines.push(`场景：${scenes.length ? scenes.map(([n, s]) => `${n} ${s.sessions} 次(最近 ${s.lastActive.slice(0, 10)})`).join(" · ") : "—"}`);
+		const res = Object.entries(usage.perResource).filter(([, r]) => (r.toolCalls ?? 0) > 0 || r.reflections);
+		lines.push(`资源用量（${res.length}）：`);
+		for (const [k, r] of res.slice(0, 20)) {
+			const refl = r.reflections ? ` · 反思 ✓${r.reflections.useful}/✗${r.reflections.unused}` : "";
+			lines.push(`  ${shortLabel(k)}： 调用 ${r.toolCalls ?? 0} · 连续未用 ${r.absentStreak ?? "?"}${refl}`);
+		}
+		const unm = Object.entries(usage.unmanagedSeen).filter(([, u]) => u.count > 0);
+		if (unm.length) lines.push(`未纳管观察：${unm.map(([k, u]) => `${shortLabel(k)} ×${u.count}(${u.scenes.join("/") || "?"})`).join(" · ")}`);
+		lines.push(`自动进化：${usage.autoEvolve ? "on" : "off"}（/scene evolve auto 切换）`);
+		ctx.ui.notify(lines.join("\n"), "info");
+	}
+
+	async function runEvolve(ctx: any): Promise<void> {
+		const cfg = core.loadScenes();
+		const usage = core.loadUsage();
+		const proposals = computeProposals(cfg, usage, { hasTools: hasToolsForTarget() });
+		if (proposals.length === 0) {
+			ctx.ui.notify("暂无进化提案（观察积累中，用 /scene stats 查看用量）", "info");
+			return;
+		}
+		const accepted: Proposal[] = [];
+		for (const p of proposals) {
+			const head =
+				p.kind === "absorb"
+					? `吸收：scenes.${p.scene}.packages += ${specOf(p.entry)}`
+					: `淘汰：scenes.${p.scene}.${p.skillPath ? "skills" : "packages"} -= ${p.label}`;
+			const ok = await ctx.ui.confirm("场景进化提案", `${head}\n依据：${p.reason}\n\n应用这条吗？`);
+			if (ok) accepted.push(p);
+		}
+		if (!accepted.length) {
+			ctx.ui.notify("已取消（未做任何修改）", "info");
+			return;
+		}
+		const next = applyProposals(cfg, accepted);
+		backupScenes();
+		core.saveScenes(next);
+		const st = core.loadState();
+		core.applyToSettings(core.computeTarget(st.active, next), st.active, undefined);
+		ctx.ui.notify(`已应用 ${accepted.length} 条提案，正在热重载…`, "info");
+		await ctx.reload();
+	}
+
+	function buildDigest(ctx: any): string {
+		let entries: any[] = [];
+		try {
+			entries = ctx.sessionManager?.getEntries?.() ?? [];
+		} catch {}
+		const msgs = entries.filter((e) => e?.type === "message").slice(-40);
+		return msgs
+			.map((e) => {
+				const role = e.message?.role ?? "?";
+				const content = e.message?.content;
+				const text =
+					typeof content === "string"
+						? content
+						: Array.isArray(content)
+							? content.filter((c: any) => c?.type === "text").map((c: any) => c.text).join(" ")
+							: "";
+				return `${role}: ${text.replace(/\s+/g, " ").slice(0, 160)}`;
+			})
+			.join("\n")
+			.slice(0, 6000);
+	}
+
+	async function runReflection(ctx: any): Promise<void> {
+		const st = core.loadState();
+		const cfg = core.loadScenes();
+		const target = core.computeTarget(st.active, cfg);
+		const skills = listSkillChildren(target.skills);
+		if (!skills.length) return;
+		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+		if (!auth?.ok || !auth.apiKey) return;
+		const sys =
+				"你是 pi 资源使用分析器。根据会话记录判断哪些已加载 skill 实际被用到或对完成任务有帮助。只输出紧凑 JSON，禁止任何其他文字。";
+		const user = `已加载 skill 清单：\n${skills.map((s) => `- ${s.label}`).join("\n")}\n\n会话尾部摘录：\n${buildDigest(ctx)}\n\n请输出 {"used":["<label>",...],"unused":["<label>",...]}。used=实际用到或明显有帮助；unused=完全未涉及。`;
+		// 动态 import：测试环境（无 node_modules）不触达；pi 运行时由 jiti alias 解析
+		const { complete } = await import("@earendil-works/pi-ai/compat");
+		const resp = await complete(
+			ctx.model,
+			{ systemPrompt: sys, messages: [{ role: "user", content: user }] },
+			{ apiKey: auth.apiKey, headers: auth.headers, env: auth.env, signal: AbortSignal.timeout(30_000), cacheRetention: "none" },
+		);
+		const parsed = parseJsonLoose(extractText(resp));
+		if (!parsed || !Array.isArray(parsed.used) || !Array.isArray(parsed.unused)) return;
+		const byLabel = new Map(skills.map((s) => [s.label, s.id]));
+		const used = (parsed.used as unknown[]).map((l) => byLabel.get(String(l))).filter(Boolean) as string[];
+		const unused = (parsed.unused as unknown[]).map((l) => byLabel.get(String(l))).filter(Boolean) as string[];
+		core.recordReflection(used, unused);
+	}
+
+	function maybeAutoEvolve(ctx: any, reason: string): void {
+		const usage = core.loadUsage();
+		if (!usage.autoEvolve) return;
+		const cfg = core.loadScenes();
+		const proposals = computeProposals(cfg, usage, { hasTools: hasToolsForTarget() });
+		if (!proposals.length) return;
+		const next = applyProposals(cfg, proposals);
+		backupScenes();
+		core.saveScenes(next);
+		const st = core.loadState();
+		core.applyToSettings(core.computeTarget(st.active, next), st.active, undefined);
+		// 不在 shutdown 里 ctx.reload()（会递归触发 shutdown）；变更下次自然重载生效
+		if (reason !== "quit") {
+			try {
+				ctx.ui.notify(
+						`自动进化已应用 ${proposals.length} 条提案（下次重载生效）：\n${proposals.map((p) => (p.kind === "absorb" ? `+ ${specOf(p.entry)} → ${p.scene}` : `- ${p.label} (${p.scene})`)).join("\n")}`,
+						"info",
+				);
+			} catch {}
+		}
+	}
+
+	pi.on("session_start", async (_event, ctx) => {
+		try {
+			const pkgs = readJson<Record<string, unknown>>(core.paths.settingsFile, {}).packages;
+			core.beginSession(ctx.sessionManager?.getSessionFile?.() ?? null, Array.isArray(pkgs) ? (pkgs as PackageEntry[]) : []);
+		} catch {}
+	});
+
+	pi.on("tool_call", async (event) => {
+		try {
+			core.recordToolUse((event as any).toolName, getToolMap().tools);
+		} catch {}
+	});
+
+	pi.on("session_shutdown", async (event, ctx) => {
+		const reason = (event as any)?.reason ?? "quit";
+		if (reason === "reload") return;
+		try {
+			await runReflection(ctx);
+		} catch {}
+		try {
+			core.endSession(reason);
+		} catch {}
+		try {
+			maybeAutoEvolve(ctx, reason);
+		} catch {}
 	});
 }

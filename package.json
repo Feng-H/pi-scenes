@@ -1,7 +1,7 @@
 {
   "name": "pi-scenes",
-  "version": "0.1.0",
-  "description": "pi 扩展：场景切换器。通用层 extension/skill 恒加载 + 按场景叠加分场景资源，/scene 一键切换并热重载；数据模型前向兼容 主场景→子场景 层级（extends 链）。",
+  "version": "0.2.0",
+  "description": "pi 扩展：场景切换器 + 资源自进化。通用层+分场景层打包 extension/skill，/scene 热切换；按实际用量（工具调用归因 + 会话结束 LLM 反思）生成吸收/淘汰提案，让场景定义随使用习惯进化。",
   "keywords": [
     "pi-package"
   ],
@@ -30,6 +30,7 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*"
   }
 }
