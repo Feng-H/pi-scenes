@@ -20,13 +20,18 @@
  *
  * 命令：
  *   /scene              弹出选择器（当前场景高亮 ●）
- *   /scene <name>       切换到指定场景
+ *   /scene <name>       切换到指定场景（参数 Tab 补全：/scene c<Tab> → /scene coding）
+ *   /scenes             同 /scene（复数别名，误输也能用；补全行为一致）
  *   /scene off|none     仅保留通用层（关闭场景）
  *   /scene status       显示当前激活与生效资源
  *   /scene init         生成模板 scenes.json 与场景 skill 目录骨架
  *   /scene stats        用量仪表盘（会话数/工具调用/反思评分/未纳管观察）
  *   /scene evolve       生成进化提案并逐条确认应用（备份 + 热重载）
  *   /scene evolve auto  开关：会话结束自动应用进化（opt-in，不动 common/无工具包）
+ *
+ * 可发现性（v0.4.1）：命令 description 在注册时动态拼入场景名清单；
+ * 参数 Tab 补全列出全部场景（icon+描述+当前标记）与子命令 ——
+ * 不需要记忆任何场景名，空格后 Tab 即见全表。
  *
  * 自进化（v0.2）：
  *   采集：tool_call 归因（静态扫描安装源码建 tool→pkg 表）+
@@ -978,9 +983,53 @@ export default function (pi: ExtensionAPI) {
 		return;
 	}
 
-	pi.registerCommand("scene", {
+	/**
+	 * 参数 Tab 补全（pi 原生 getArgumentCompletions）：
+	 * - 空前缀：列出全部场景（label 带 icon，description 带描述与「当前」标记）+ 全部子命令
+	 * - 前缀过滤（大小写不敏感，value 整体替换参数文本）：/scene c<Tab> → /scene coding
+	 * - 多词子命令：/scene evolve a<Tab> → /scene evolve auto
+	 * - 无匹配返回 null（pi 停用补全弹窗，不打断输入）
+	 */
+	function sceneCompletions(prefix: string): Array<{ value: string; label: string; description?: string }> | null {
+		const p = (prefix ?? "").trim().toLowerCase();
+		let cfg: ScenesFile = {};
+		let active: string | null = null;
+		try {
+			cfg = core.loadScenes();
+			active = core.loadState().active;
+		} catch {}
+		const items: Array<{ value: string; label: string; description?: string }> = [];
+		for (const [name, def] of Object.entries(cfg.scenes ?? {})) {
+			const icon = def?.icon?.trim() || "◆";
+			const desc = def?.description ? (active === name ? `当前 · ${def.description}` : def.description) : active === name ? "当前场景" : undefined;
+			items.push({ value: name, label: `${icon} ${name}`, description: desc });
+		}
+		const subs: Array<[string, string]> = [
+			["off", "仅保留通用层（关闭场景）"],
+			["status", "查看当前场景与生效资源"],
+			["init", "生成模板 scenes.json 与 skill 骨架"],
+			["stats", "用量仪表盘（会话/工具调用/反思）"],
+			["evolve", "生成并应用进化提案"],
+			["evolve auto", "开关：会话结束自动应用进化"],
+		];
+		for (const [value, description] of subs) items.push({ value, label: value, description });
+		const filtered = items.filter((i) => i.value.toLowerCase().startsWith(p));
+		return filtered.length > 0 ? filtered : null;
+	}
+
+	/** 命令提示行（palette 一行可见）：动态拼入当前场景名清单，注册时求值 */
+	function sceneCommandDescription(): string {
+		let names: string[] = [];
+		try {
+			names = Object.keys(core.loadScenes().scenes ?? {});
+		} catch {}
+		return `切换场景（空格后 Tab 列出并补全）：${names.join("/") || "<name>"}`;
+	}
+
+	const sceneCommand = {
 		title: "场景切换",
-		description: "通用层+场景 一键切换 extension/skill（/scene、/scene <name>、/scene off、/scene status、/scene init、/scene stats、/scene evolve）",
+		description: sceneCommandDescription(),
+		getArgumentCompletions: sceneCompletions,
 		handler: async (args: string, ctx: any) => {
 			const arg = (args ?? "").trim();
 
@@ -1096,7 +1145,11 @@ export default function (pi: ExtensionAPI) {
 			}
 			await doSwitch(ctx, name);
 		},
-	});
+	};
+
+	// 主命令 + 复数别名：/scenes 与 /scene 完全同义（用户肌肉记忆常多打一个 s）
+	pi.registerCommand("scene", sceneCommand);
+	pi.registerCommand("scenes", sceneCommand);
 
 	// ── v0.2：用量采集与自进化 ──────────────────────────────
 

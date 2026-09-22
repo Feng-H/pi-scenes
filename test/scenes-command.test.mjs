@@ -191,3 +191,57 @@ test("徽标 icon 定制：scenes.json 配 icon → '💻 coding'，未配 → �
 	await handler("plain", mkCtx());
 	assert.equal(statuses.get("pi-scene"), "◆ plain", "未配 icon 的场景应回退 '◆ plain'");
 });
+
+test("参数 Tab 补全：场景名+子命令全量列出、前缀过滤、多词子命令；/scenes 别名同源", async () => {
+	fs.writeFileSync(
+		path.join(dir, "scenes.json"),
+		JSON.stringify({
+			common: { packages: ["npm:pi-scenes"], skills: [] },
+			scenes: {
+				coding: { description: "写代码", icon: "💻", packages: ["npm:pi-scenes"], skills: [] },
+				research: { description: "调研", packages: ["npm:pi-scenes"], skills: [] },
+			},
+		}),
+	);
+	const commands = {};
+	scenesExtension({
+		registerCommand: (name, def) => {
+			commands[name] = def;
+		},
+		registerTool: () => {},
+		on: () => {},
+	});
+	assert.deepEqual(Object.keys(commands).sort(), ["scene", "scenes"], "应同时注册 /scene 与 /scenes 别名");
+	const gc = commands.scene.getArgumentCompletions;
+	assert.equal(typeof gc, "function", "命令应携带 getArgumentCompletions");
+
+	// 空前缀：场景在前（label 带 icon、description 带描述），子命令在后
+	const all = gc("");
+	const coding = all.find((i) => i.value === "coding");
+	assert.ok(coding && coding.label.includes("💻") && String(coding.description).includes("写代码"));
+	for (const sub of ["off", "status", "init", "stats", "evolve", "evolve auto"]) {
+		assert.ok(all.some((i) => i.value === sub), `空前缀应包含子命令 ${sub}`);
+	}
+	// 场景排在子命令前（先场景后子命令的固定顺序）
+	assert.ok(all.findIndex((i) => i.value === "coding") < all.findIndex((i) => i.value === "off"));
+
+	// 前缀过滤：/scene c<Tab> → coding（大小写不敏感）
+	assert.deepEqual(gc("c").map((i) => i.value), ["coding"]);
+	assert.deepEqual(gc("C").map((i) => i.value), ["coding"]);
+	// 多词子命令：/scene evolve a<Tab> → evolve auto
+	assert.deepEqual(gc("evolve a").map((i) => i.value), ["evolve auto"]);
+	// 无匹配 → null
+	assert.equal(gc("zzz"), null);
+	// 别名与主命令共享同一补全函数与 handler
+	assert.equal(commands.scenes.getArgumentCompletions, gc);
+	assert.equal(commands.scenes.handler, commands.scene.handler);
+	// 提示行动态拼入场景名 + Tab 引导
+	assert.ok(String(commands.scene.description).includes("coding") && String(commands.scene.description).includes("research"));
+	assert.ok(String(commands.scene.description).includes("Tab"));
+
+	// scenes.json 缺失：不抛异常，仍补全子命令
+	fs.rmSync(path.join(dir, "scenes.json"));
+	const onlySubs = gc("");
+	assert.ok(onlySubs.length > 0 && onlySubs.every((i) => ["off", "status", "init", "stats", "evolve", "evolve auto"].includes(i.value)));
+	assert.deepEqual(gc("ini").map((i) => i.value), ["init"]);
+});

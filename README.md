@@ -21,6 +21,7 @@ active resources = common layer ∪ current scene
 - **Scene layers** — per-scenario bundles (coding / office / writing…), loaded only while active
 - Switching rewrites `packages`/`skills` in `settings.json`, then `ctx.reload()` hot-reloads — **no pi restart, session untouched**
 - Every switch stamps a persistent **status-bar badge** (`◆ coding`, or a per-scene `icon` like `💻 coding`) so the bar always answers *"which scene am I in"* — restored at session start, cleared by `/scene off`
+- **Zero-memory discoverability (v0.4.1)** — the command hint lists your scene names, and Tab completion shows every scene (icon + description + current marker) plus subcommands: type `/scene c` + Tab → `/scene coding`; `/scenes` works as a plural alias
 - The data model reserves an `extends` chain (with cycle detection) for future **parent → child scene** hierarchies
 
 ## Install
@@ -41,6 +42,8 @@ Then `/reload` and `/scene` is live.
 
 ```
 /scene            # picker: all scenes, ● current, ○ switchable
+/scene <Tab>      # tab-complete: lists all scenes (icon + description) and subcommands
+/scene c<Tab>     # completes to /scene coding — no scene names to memorize
 /scene coding     # switch directly to the coding scene
 /scene office     # switch to the office scene
 /scene off        # common layer only (scene off)
@@ -49,6 +52,7 @@ Then `/reload` and `/scene` is live.
 /scene stats      # usage dashboard: sessions, tool calls, reflections
 /scene evolve     # generate & apply evolution proposals (confirm-first)
 /scene evolve auto # toggle auto-apply at session end (opt-in)
+/scenes ...       # plural alias — same command, same completions
 ```
 
 First run of `/scene` offers to generate the template. It ships with **seven preset scenes + common** (all packages verified on npm, 2026-09):
@@ -221,6 +225,7 @@ pi 的 `packages` / `skills` 是全局平铺的：所有已安装扩展、所有
 - **场景层**：每个场景自己的一组 extension + skill，激活才加载
 - 切换 = 改写 `settings.json` 的 `packages`/`skills` → `ctx.reload()` 热重载，**无需重启 pi**
 - 每次切换成功后状态栏常驻**场景徽标**（`◆ coding`，或每场景自定义 `icon` 如 `💻 coding`），状态栏随时回答「我现在在哪个场景」——会话启动自动恢复，`/scene off` 清除
+- **零记忆可发现性（v0.4.1）**——命令提示行直接拼入场景名清单；Tab 补全列出全部场景（icon + 描述 + 当前标记）与子命令：`/scene c` + Tab → `/scene coding`；`/scenes` 复数别名同义可用
 - 数据模型预留 `extends` 继承链（带环检测），为将来「主场景 → 子场景」层级铺路
 
 ## 安装
@@ -241,6 +246,8 @@ pi install git:github.com/Feng-H/pi-scenes
 
 ```
 /scene            # 弹出选择器：列出所有场景，● 当前，○ 可切
+/scene <Tab>      # Tab 补全：列出全部场景（icon + 描述）与子命令
+/scene c<Tab>     # 补齐为 /scene coding —— 无需记忆任何场景名
 /scene coding     # 直接切到 coding 场景
 /scene office     # 切到办公场景
 /scene off        # 仅保留通用层（关闭场景）
@@ -249,6 +256,7 @@ pi install git:github.com/Feng-H/pi-scenes
 /scene stats      # 用量仪表盘：会话数 / 工具调用 / 反思评分
 /scene evolve     # 生成并应用进化提案（逐条确认）
 /scene evolve auto # 开关：会话结束自动应用（opt-in）
+/scenes ...       # 复数别名：与 /scene 完全同义，补全行为一致
 ```
 
 首次运行 `/scene` 会询问是否生成模板，生成后编辑场景定义。模板内置 **七个预设场景 + 通用层**（包均在 npm 核验存在，2026-09）：
