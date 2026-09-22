@@ -20,6 +20,7 @@ active resources = common layer ∪ current scene
 - **Common layer** — extensions + skills that stay loaded in *every* scenario (quota display, session carryover…)
 - **Scene layers** — per-scenario bundles (coding / office / writing…), loaded only while active
 - Switching rewrites `packages`/`skills` in `settings.json`, then `ctx.reload()` hot-reloads — **no pi restart, session untouched**
+- Every switch stamps a persistent **status-bar badge** (`◆ coding`) so the bar always answers *"which scene am I in"* — restored at session start, cleared by `/scene off`
 - The data model reserves an `extends` chain (with cycle detection) for future **parent → child scene** hierarchies
 
 ## Install
@@ -215,6 +216,7 @@ pi 的 `packages` / `skills` 是全局平铺的：所有已安装扩展、所有
 - **通用层**：任何场景下恒加载的 extension + skill（如配额显示、会话延续）
 - **场景层**：每个场景自己的一组 extension + skill，激活才加载
 - 切换 = 改写 `settings.json` 的 `packages`/`skills` → `ctx.reload()` 热重载，**无需重启 pi**
+- 每次切换成功后状态栏常驻**场景徽标**（`◆ coding`），状态栏随时回答「我现在在哪个场景」——会话启动自动恢复，`/scene off` 清除
 - 数据模型预留 `extends` 继承链（带环检测），为将来「主场景 → 子场景」层级铺路
 
 ## 安装
