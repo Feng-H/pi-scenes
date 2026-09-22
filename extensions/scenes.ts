@@ -57,6 +57,8 @@ export type PackageEntry = string | { source: string; [k: string]: unknown };
 
 export interface SceneDef {
 	description?: string;
+	/** 状态栏徽标与选择器里的场景前缀（建议 emoji，如 💻）；缺省 ◆ */
+	icon?: string;
 	/** 前向兼容：继承父场景（主场景→子场景层级），资源按链 union 合并 */
 	extends?: string;
 	packages?: PackageEntry[];
@@ -775,6 +777,7 @@ export function makeCore(baseDir: string) {
 			scenes: {
 				coding: {
 					description: "写代码：实时代码反馈、子代理委派、并行分支",
+					icon: "💻",
 					packages: [
 					"npm:pi-lens", // LSP/linter/格式化实时代码反馈
 					"npm:pi-subagents", // 单代理委派 + 脚本化多代理工作流
@@ -784,6 +787,7 @@ export function makeCore(baseDir: string) {
 				},
 				office: {
 					description: "办公：文档处理与日常事务",
+					icon: "📄",
 					packages: [
 					"npm:pi-docparser", // PDF/Office 文档解析抽取
 					],
@@ -791,6 +795,7 @@ export function makeCore(baseDir: string) {
 				},
 				pm: {
 					description: "产品经理：竞品调研、目标规划与需求跟踪",
+					icon: "🎯",
 					packages: [
 					"npm:pi-web-access", // 网页搜索/抓取/PDF/YouTube（竞品与市场调研）
 					"npm:pi-goal-x", // /goal 目标规划 + 独立完成度审计（roadmap/需求跟踪）
@@ -800,6 +805,7 @@ export function makeCore(baseDir: string) {
 				},
 				research: {
 					description: "咨询调研：多源检索、并行多角度深挖",
+					icon: "🔍",
 					packages: [
 					"npm:pi-web-access", // 搜索/URL 抓取/PDF/视频理解（调研核心）
 					"npm:pi-subagents", // 多角度并行调研（每个子代理一源）
@@ -808,6 +814,7 @@ export function makeCore(baseDir: string) {
 				},
 				writing: {
 					description: "写作：素材检索、事实核查、文体打磨",
+					icon: "📝",
 					packages: [
 					"npm:pi-web-access", // 素材检索与事实核查（引用溯源）
 					],
@@ -815,6 +822,7 @@ export function makeCore(baseDir: string) {
 				},
 				data: {
 					description: "数据分析：表格抽取、MCP 接数据库/BI",
+					icon: "📊",
 					packages: [
 					"npm:pi-docparser", // Excel/CSV/PDF 表格结构化抽取
 					"npm:pi-mcp-adapter", // 接任意 MCP server（数据库/BI/内部数据服务）
@@ -871,7 +879,8 @@ export default function (pi: ExtensionAPI) {
 	const core = makeCore(baseDir);
 
 	/**
-	 * 状态栏常驻场景徽标（◆ <场景名>）：切换后用户始终知道自己在哪个场景。
+	 * 状态栏常驻场景徽标（<icon> <场景名>）：切换后用户始终知道自己在哪个场景。
+	 * 前缀可由 scenes.json 每场景 icon 字段定制（建议 emoji），缺省 ◆。
 	 * 设计动机：场景切换器在界面上只弹一次 notify 就消失了，用户无从得知当前场景；
 	 * 而场景附带的工具型扩展（如 pi-lens）的状态栏内脏反而在抢占视觉 ——
 	 * 状态栏应该回答“我在哪”，而不是“工具的内部状态”。
@@ -883,7 +892,8 @@ export default function (pi: ExtensionAPI) {
 			if (!ui || typeof ui.setStatus !== "function") return;
 			const active = core.loadState().active;
 			if (active) {
-				const text = `◆ ${active}`;
+				const icon = core.loadScenes().scenes?.[active]?.icon?.trim() || "◆";
+				const text = `${icon} ${active}`;
 				ui.setStatus("pi-scene", ui.theme?.fg ? ui.theme.fg("accent", text) : text);
 			} else {
 				ui.setStatus("pi-scene", undefined);
@@ -1003,7 +1013,7 @@ export default function (pi: ExtensionAPI) {
 				const target = core.computeTarget(st.active, cfg);
 				const collisions = core.findSpecCollisions(cfg);
 				const lines = [
-					`当前场景：${st.active ? st.active : "（无，仅通用层）"}`,
+					`当前场景：${st.active ? `${cfg.scenes?.[st.active]?.icon?.trim() || "◆"} ${st.active}` : "（无，仅通用层）"}`,
 					`生效 packages（${target.packages.length}）：${target.packages.map(specOf).join(", ") || "—"}`,
 					`生效 skills（${target.skills.length}）：${target.skills.join(", ") || "—"}`,
 					`可用场景：${Object.keys(cfg.scenes ?? {}).join(", ") || "—"}`,
@@ -1056,10 +1066,15 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`scenes.json 里还没有定义场景，编辑 ${core.paths.scenesFile}`, "info");
 				return;
 			}
+			// 选择器条目同步显示场景 icon（label→name 映射解析，免字符串切片）
+			const labelToName = new Map<string, string>();
 			const items: string[] = names.map((n) => {
 				const d = cfg.scenes![n]?.description ?? "";
+				const icon = cfg.scenes![n]?.icon?.trim() || "◆";
 				const cur = st.active === n ? "●" : "○";
-				return `${cur} ${n}${d ? ` · ${d}` : ""}${st.active === n ? "  [当前]" : ""}`;
+				const label = `${cur} ${icon} ${n}${d ? ` · ${d}` : ""}${st.active === n ? "  [当前]" : ""}`;
+				labelToName.set(label, n);
+				return label;
 			});
 			const extra = [PICKER_OFF + (st.active === null ? "  [当前]" : ""), PICKER_CANCEL];
 			const choice = await ctx.ui.select(`切换场景（通用层恒生效）`, [...items, ...extra]);
@@ -1072,8 +1087,9 @@ export default function (pi: ExtensionAPI) {
 				await doSwitch(ctx, null);
 				return;
 			}
-			// "● name · desc" → name
-			const name = choice.slice(2).split(" ·")[0].split("  [")[0].trim();
+			// label → 场景名（含 icon/描述的完整条目作为 key，避免解析歧义）
+			const name = labelToName.get(choice);
+			if (!name) return;
 			if (st.active === name) {
 				ctx.ui.notify(`当前已在场景「${name}」`, "info");
 				return;

@@ -20,7 +20,7 @@ active resources = common layer ∪ current scene
 - **Common layer** — extensions + skills that stay loaded in *every* scenario (quota display, session carryover…)
 - **Scene layers** — per-scenario bundles (coding / office / writing…), loaded only while active
 - Switching rewrites `packages`/`skills` in `settings.json`, then `ctx.reload()` hot-reloads — **no pi restart, session untouched**
-- Every switch stamps a persistent **status-bar badge** (`◆ coding`) so the bar always answers *"which scene am I in"* — restored at session start, cleared by `/scene off`
+- Every switch stamps a persistent **status-bar badge** (`◆ coding`, or a per-scene `icon` like `💻 coding`) so the bar always answers *"which scene am I in"* — restored at session start, cleared by `/scene off`
 - The data model reserves an `extends` chain (with cycle detection) for future **parent → child scene** hierarchies
 
 ## Install
@@ -76,6 +76,7 @@ Edit it to fit your setup (each scene also gets a skill dir scaffold at `~/.pi/a
   "scenes": {                              // ── scene layers: stacked when active
     "coding": {
       "description": "coding",
+      "icon": "💻",
       "packages": ["npm:pi-carryover"],
       "skills": ["~/.pi/agent/scenes/coding/skills"]
     },
@@ -95,6 +96,8 @@ Drop `SKILL.md` folders (or `.md` files) into a scene's skill directory; the who
 ### Status-bar scene badge
 
 A successful switch sets a persistent footer badge (`◆ coding`), restored automatically at every session start and cleared by `/scene off`. The status bar should answer *"which scene am I in"* — not display tool internals.
+
+The prefix is customizable per scene via the `icon` field — emoji works great (`💻 coding`). The scaffolded presets ship with `💻 📄 🎯 🔍 📝 📊`, and the picker plus `/scene status` display the same icon; unset scenes fall back to `◆`.
 
 Scenes often bundle tool-heavy extensions whose own footer output crowds the bar. If you use the preset `coding` scene, pi-lens's diagnostics widget and `LSP Inactive` status can be silenced **without losing any AI-side value** (turn-end error injection, `lens_diagnostics`, symbol navigation) via `~/.pi-lens/config.json`:
 
@@ -169,6 +172,7 @@ In short: **installed forever, loaded per scene**. One caveat: extensions you in
 |---|---|
 | `common.packages` / `common.skills` | common-layer resources, always loaded |
 | `scenes.<name>.packages` | accepts `"npm:<pkg>"`, `"git:github.com/u/r"`, local paths, and object form (resource filtering, same grammar as pi settings) |
+| `scenes.<name>.icon` | status-bar badge & picker prefix (emoji recommended; default `◆`) |
 | `scenes.<name>.skills` | paths/directories, `~` expanded |
 | `scenes.<name>.extends` | 🧪 inherit a parent scene (union merge + cycle detection) — forward-compatible entry for parent→child hierarchies |
 | `evolve.patience` / `evolve.absorbThreshold` / `evolve.skillUnusedThreshold` | self-evolution tunables (see "Self-evolution") |
@@ -186,7 +190,7 @@ Before uninstalling, `/scene off` and prune entries you don't want to keep from 
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test, 19 cases: injection/reclaim + usage/evolution + conflict guards + command-layer smoke (no TUI needed)
+npm test          # node:test, 20 cases: injection/reclaim + usage/evolution + conflict guards + command-layer smoke (no TUI needed)
 ```
 
 Tests isolate via the `PI_SCENES_DIR` env var — your real `~/.pi/agent` is never touched.
@@ -216,7 +220,7 @@ pi 的 `packages` / `skills` 是全局平铺的：所有已安装扩展、所有
 - **通用层**：任何场景下恒加载的 extension + skill（如配额显示、会话延续）
 - **场景层**：每个场景自己的一组 extension + skill，激活才加载
 - 切换 = 改写 `settings.json` 的 `packages`/`skills` → `ctx.reload()` 热重载，**无需重启 pi**
-- 每次切换成功后状态栏常驻**场景徽标**（`◆ coding`），状态栏随时回答「我现在在哪个场景」——会话启动自动恢复，`/scene off` 清除
+- 每次切换成功后状态栏常驻**场景徽标**（`◆ coding`，或每场景自定义 `icon` 如 `💻 coding`），状态栏随时回答「我现在在哪个场景」——会话启动自动恢复，`/scene off` 清除
 - 数据模型预留 `extends` 继承链（带环检测），为将来「主场景 → 子场景」层级铺路
 
 ## 安装
@@ -272,6 +276,7 @@ pi install git:github.com/Feng-H/pi-scenes
   "scenes": {                              // ── 场景层：激活才叠加
     "coding": {
       "description": "写代码",
+      "icon": "💻",
       "packages": ["npm:pi-carryover"],
       "skills": ["~/.pi/agent/scenes/coding/skills"]
     },
@@ -292,6 +297,8 @@ pi install git:github.com/Feng-H/pi-scenes
 ### 状态栏场景徽标
 
 切换成功后状态栏常驻徽标（`◆ coding`），每次会话启动自动恢复，`/scene off` 清除。状态栏应该回答「我现在在哪个场景」——而不是展示工具的内部状态。
+
+徽标前缀可按场景用 `icon` 字段定制——emoji 完全可用（`💻 coding`）。脚手架预设自带 `💻 📄 🎯 🔍 📝 📊`，选择器与 `/scene status` 同步显示同一 icon；未配置的场景回退 `◆`。
 
 场景常打包工具型扩展，它们自己的 footer 输出会把状态栏拼得很吵。若使用预设 `coding` 场景，pi-lens 的诊断 widget 与 `LSP Inactive` 状态可在**不损失任何 AI 侧价值**（turn-end 错误注入、`lens_diagnostics`、符号导航）的前提下静音，写入 `~/.pi-lens/config.json`：
 
@@ -366,6 +373,7 @@ pi-scenes 绝不改第三方包的全局配置——徽标是它放到状态栏�
 |---|---|
 | `common.packages` / `common.skills` | 通用层资源，恒加载 |
 | `scenes.<name>.packages` | 支持 `"npm:<pkg>"`、`"git:github.com/u/r"`、本地路径字符串，及 object form（资源过滤，同 pi settings 规范） |
+| `scenes.<name>.icon` | 状态栏徽标与选择器前缀（建议 emoji；缺省 `◆`） |
 | `scenes.<name>.skills` | 路径/目录数组，支持 `~` 展开 |
 | `scenes.<name>.extends` | 🧪 继承父场景（union 合并，带环检测）——「主场景→子场景」层级的前向兼容入口 |
 | `evolve.patience` / `evolve.absorbThreshold` / `evolve.skillUnusedThreshold` | 自进化阈值（见「自进化」节） |
@@ -383,7 +391,7 @@ managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packag
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test，19 用例：注入/回收 + 用量/进化 + 异写法冲突防护 + command 层冒烟（无需 TUI）
+npm test          # node:test，20 用例：注入/回收 + 用量/进化 + 异写法冲突防护 + command 层冒烟（无需 TUI）
 ```
 
 测试用 `PI_SCENES_DIR` 环境变量隔离基目录，不碰真实 `~/.pi/agent`。

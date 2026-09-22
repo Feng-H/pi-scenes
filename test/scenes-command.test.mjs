@@ -143,3 +143,51 @@ test("状态栏场景徽标：切换成功 setStatus('pi-scene','◆ coding')，
 	await events.session_start({}, mkCtx());
 	assert.equal(statuses.get("pi-scene"), undefined, "off 状态下 session_start 不得重设徽标");
 });
+
+test("徽标 icon 定制：scenes.json 配 icon → '💻 coding'，未配 → 回退 ◆", async () => {
+	fs.writeFileSync(
+		path.join(dir, "scenes.json"),
+		JSON.stringify({
+			common: { packages: ["npm:pi-scenes"], skills: [] },
+			scenes: {
+				coding: { description: "写代码", icon: "💻", packages: ["npm:pi-scenes"], skills: [] },
+				plain: { description: "无图标", packages: ["npm:pi-scenes"], skills: [] },
+			},
+		}),
+	);
+	fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ packages: ["npm:pi-scenes"], skills: [] }));
+
+	const statuses = new Map();
+	const mkCtx = () => ({
+		ui: {
+			notify: () => {},
+			confirm: async () => true,
+			select: async () => null,
+			setStatus: (k, v) => statuses.set(k, v),
+			theme: { fg: (_c, s) => s },
+		},
+		reload: async () => {},
+	});
+	let handler = null;
+	const events = {};
+	scenesExtension({
+		registerCommand: (_n, def) => {
+			handler = def.handler;
+		},
+		registerTool: () => {},
+		on: (name, fn) => {
+			events[name] = fn;
+		},
+	});
+
+	await handler("coding", mkCtx());
+	assert.equal(statuses.get("pi-scene"), "💻 coding", "配置 icon 后徽标应为 '💻 coding'");
+
+	// session_start 恢复同样带 icon
+	statuses.delete("pi-scene");
+	await events.session_start({}, mkCtx());
+	assert.equal(statuses.get("pi-scene"), "💻 coding", "session_start 恢复应保留 icon");
+
+	await handler("plain", mkCtx());
+	assert.equal(statuses.get("pi-scene"), "◆ plain", "未配 icon 的场景应回退 '◆ plain'");
+});
