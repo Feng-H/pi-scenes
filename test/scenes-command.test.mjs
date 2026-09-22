@@ -89,3 +89,57 @@ test("/scene coding：确认安装缺失包失败（exit≠0）→ 中止且不�
 	await handler("coding", ctx);
 	assert.equal(fs.readFileSync(path.join(dir, "settings.json"), "utf8"), before, "取消路径不得写 settings");
 });
+
+test("状态栏场景徽标：切换成功 setStatus('pi-scene','◆ coding')，off 清除，session_start 幂等恢复", async () => {
+	// 目标包全部已在 settings → 无 missing → 不弹 confirm、不 spawnSync，直达 applyToSettings
+	fs.writeFileSync(
+		path.join(dir, "scenes.json"),
+		JSON.stringify({
+			common: { packages: ["npm:pi-scenes"], skills: [] },
+			scenes: { coding: { description: "写代码", packages: ["npm:pi-scenes"], skills: [] } },
+		}),
+	);
+	fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ packages: ["npm:pi-scenes"], skills: [] }));
+
+	const statuses = new Map();
+	const mkCtx = () => ({
+		ui: {
+			notify: () => {},
+			confirm: async () => true,
+			select: async () => null,
+			setStatus: (k, v) => statuses.set(k, v),
+			theme: { fg: (_c, s) => s },
+		},
+		reload: async () => {},
+	});
+
+	let handler = null;
+	const events = {};
+	scenesExtension({
+		registerCommand: (_n, def) => {
+			handler = def.handler;
+		},
+		registerTool: () => {},
+		on: (name, fn) => {
+			events[name] = fn;
+		},
+	});
+
+	// 1) 切到 coding → 徽标出现
+	await handler("coding", mkCtx());
+	assert.equal(statuses.get("pi-scene"), "◆ coding", "切换成功后应 setStatus('pi-scene','◆ coding')");
+
+	// 2) 新会话（如重启 pi）→ session_start 恢复徽标
+	statuses.delete("pi-scene");
+	await events.session_start({}, mkCtx());
+	assert.equal(statuses.get("pi-scene"), "◆ coding", "session_start 应从 scenes-state.json 恢复徽标");
+
+	// 3) off（仅通用层）→ 徽标清除
+	await handler("off", mkCtx());
+	assert.equal(statuses.get("pi-scene"), undefined, "/scene off 后应清除 pi-scene 徽标");
+
+	// 4) session_start 后仍为 off → 不重设徽标（保持清除）
+	statuses.set("pi-scene", "stale");
+	await events.session_start({}, mkCtx());
+	assert.equal(statuses.get("pi-scene"), undefined, "off 状态下 session_start 不得重设徽标");
+});

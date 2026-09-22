@@ -91,6 +91,18 @@ Edit it to fit your setup (each scene also gets a skill dir scaffold at `~/.pi/a
 
 Drop `SKILL.md` folders (or `.md` files) into a scene's skill directory; the whole directory toggles with the scene. `/scene init` scaffolds `~/.pi/agent/scenes/{common,coding,office,pm,research,writing,data}/skills/`.
 
+### Status-bar scene badge
+
+A successful switch sets a persistent footer badge (`◆ coding`), restored automatically at every session start and cleared by `/scene off`. The status bar should answer *"which scene am I in"* — not display tool internals.
+
+Scenes often bundle tool-heavy extensions whose own footer output crowds the bar. If you use the preset `coding` scene, pi-lens's diagnostics widget and `LSP Inactive` status can be silenced **without losing any AI-side value** (turn-end error injection, `lens_diagnostics`, symbol navigation) via `~/.pi-lens/config.json`:
+
+```json
+{ "ui": { "hideLspStatus": true }, "widget": { "visible": false } }
+```
+
+pi-scenes never edits a third-party package's global config — the badge stays the only thing pi-scenes itself puts on your status bar.
+
 ## Self-evolution (usage-driven)
 
 Scenes are not static. pi-scenes observes what you actually use and proposes updates:
@@ -272,6 +284,18 @@ pi install git:github.com/Feng-H/pi-scenes
 
 场景 skill 目录里放 `SKILL.md` 文件夹（或 `.md` 文件）即可，切换场景时整目录启停。
 `/scene init` 会创建 `~/.pi/agent/scenes/{common,coding,office,pm,research,writing,data}/skills/` 骨架。
+
+### 状态栏场景徽标
+
+切换成功后状态栏常驻徽标（`◆ coding`），每次会话启动自动恢复，`/scene off` 清除。状态栏应该回答「我现在在哪个场景」——而不是展示工具的内部状态。
+
+场景常打包工具型扩展，它们自己的 footer 输出会把状态栏拼得很吵。若使用预设 `coding` 场景，pi-lens 的诊断 widget 与 `LSP Inactive` 状态可在**不损失任何 AI 侧价值**（turn-end 错误注入、`lens_diagnostics`、符号导航）的前提下静音，写入 `~/.pi-lens/config.json`：
+
+```json
+{ "ui": { "hideLspStatus": true }, "widget": { "visible": false } }
+```
+
+pi-scenes 绝不改第三方包的全局配置——徽标是它放到状态栏上的唯一东西。
 
 ## 自进化（用量驱动）
 

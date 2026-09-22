@@ -870,6 +870,27 @@ export default function (pi: ExtensionAPI) {
 	const baseDir = process.env.PI_SCENES_DIR || path.join(os.homedir(), ".pi", "agent");
 	const core = makeCore(baseDir);
 
+	/**
+	 * 状态栏常驻场景徽标（◆ <场景名>）：切换后用户始终知道自己在哪个场景。
+	 * 设计动机：场景切换器在界面上只弹一次 notify 就消失了，用户无从得知当前场景；
+	 * 而场景附带的工具型扩展（如 pi-lens）的状态栏内脏反而在抢占视觉 ——
+	 * 状态栏应该回答“我在哪”，而不是“工具的内部状态”。
+	 * off（仅通用层）时清除；session_start 时幂等重放（重启 pi 后恢复）。
+	 */
+	function updateSceneBadge(ctx: any): void {
+		try {
+			const ui = ctx?.ui;
+			if (!ui || typeof ui.setStatus !== "function") return;
+			const active = core.loadState().active;
+			if (active) {
+				const text = `◆ ${active}`;
+				ui.setStatus("pi-scene", ui.theme?.fg ? ui.theme.fg("accent", text) : text);
+			} else {
+				ui.setStatus("pi-scene", undefined);
+			}
+		} catch {}
+	}
+
 	/** 执行切换（name=null 表示仅通用层） */
 	async function doSwitch(ctx: any, name: string | null): Promise<void> {
 		const cfg = core.loadScenes();
@@ -938,6 +959,7 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		const r = core.applyToSettings(target, name, preInstallPackages);
+		updateSceneBadge(ctx);
 		ctx.ui.notify(
 			`已切换到 ${label}\n  +${r.addedPackages.length} 包 +${r.addedSkills.length} skill · -${r.removedPackages.length} 包 -${r.removedSkills.length} skill\n  正在热重载…`,
 			"info",
@@ -1215,6 +1237,7 @@ export default function (pi: ExtensionAPI) {
 			const pkgs = readJson<Record<string, unknown>>(core.paths.settingsFile, {}).packages;
 			core.beginSession(ctx.sessionManager?.getSessionFile?.() ?? null, Array.isArray(pkgs) ? (pkgs as PackageEntry[]) : []);
 		} catch {}
+		updateSceneBadge(ctx);
 	});
 
 	pi.on("tool_call", async (event) => {
