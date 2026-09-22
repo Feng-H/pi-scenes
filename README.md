@@ -135,6 +135,8 @@ Usage data: `~/.pi/agent/scenes-usage.json` (machine-local, inert). View anytime
 
 In short: **installed forever, loaded per scene**. One caveat: extensions you installed manually (your own entries in settings) are yours — pi-scenes treats them as `borrowed`, never touches them, so they stay loaded in *every* scene.
 
+**Package updates are scene-independent.** Every package — whichever scene lists it — is installed once, globally, under `~/.pi/agent/npm/`; scenes only flip the `settings.json` switch. So `pi update --extensions` works no matter which scene is active (pi's update banner scans installed packages, not the active scene), and since scene definitions use version-less specs (`npm:<pkg>`), the new version loads on the next switch/reload. One caveat: `0.x` caret ranges don't cross minor versions — if the banner persists after updating, pin it explicitly: `pi install npm:<pkg>@<version>`.
+
 ### Duplicate & conflict handling
 
 - Same spec in `common` and a scene → deduplicated at the union (loaded once).
@@ -183,7 +185,7 @@ Before uninstalling, `/scene off` and prune entries you don't want to keep from 
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test, 18 cases: injection/reclaim + usage/evolution + conflict guards + command-layer smoke (no TUI needed)
+npm test          # node:test, 19 cases: injection/reclaim + usage/evolution + conflict guards + command-layer smoke (no TUI needed)
 ```
 
 Tests isolate via the `PI_SCENES_DIR` env var — your real `~/.pi/agent` is never touched.
@@ -329,6 +331,8 @@ pi-scenes 绝不改第三方包的全局配置——徽标是它放到状态栏�
 
 一句话：**永远安装，只按场景加载**。注意：你手工 `pi install` 的条目属于你自己——pi-scenes 视为 `borrowed`，永不触碰，因此在**所有**场景都保持加载。
 
+**包更新与场景无关。** 无论包被哪个场景引用，都只在全局安装一份（`~/.pi/agent/npm/`），场景只是拨动 `settings.json` 里的开关。因此 `pi update --extensions` 与当前在哪个场景无关（pi 的更新提示扫的是已安装包，不是活跃场景），且场景定义写的是不带版本的 `npm:<pkg>`，更新后下次切换/重载自动加载新版。注意 `0.x` 的 caret 范围不跨 minor——若更新提示反复出现，显式装指定版本：`pi install npm:<pkg>@<版本>`。
+
 ### 重复与冲突处理
 
 - 同一写法在 common 与场景重复 → 并集时去重，只加载一次。
@@ -377,7 +381,7 @@ managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packag
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test，18 用例：注入/回收 + 用量/进化 + 异写法冲突防护 + command 层冒烟（无需 TUI）
+npm test          # node:test，19 用例：注入/回收 + 用量/进化 + 异写法冲突防护 + command 层冒烟（无需 TUI）
 ```
 
 测试用 `PI_SCENES_DIR` 环境变量隔离基目录，不碰真实 `~/.pi/agent`。
