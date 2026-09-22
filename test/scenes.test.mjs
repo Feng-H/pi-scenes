@@ -359,3 +359,85 @@ test("applyProposals：生成新配置且不动原对象", () => {
 	assert.deepEqual(cfg.scenes.coding.skills, ["~/skills-dead"]);
 });
 
+test("v0.6.0 对象形态条目：pi install 写入裸 spec 后，场景声明对象形态替换之（skills 过滤不丢）", () => {
+	const { core } = tmpBase();
+	const OBJ = {
+		source: "git:github.com/anthropics/skills",
+		skills: ["skills/docx", "skills/pptx", "skills/xlsx", "skills/pdf"],
+	};
+	const cfg = {
+		common: { packages: [], skills: [] },
+		scenes: {
+			office: { packages: [OBJ], skills: [] },
+		},
+	};
+	// 模拟：pi install git:github.com/anthropics/skills 已把裸字符串写进 settings
+	writeSettings(core, { packages: ["git:github.com/anthropics/skills"] });
+	const r = core.applyToSettings(core.computeTarget("office", cfg), "office", []);
+
+	// 对象形态替换裸 spec：settings 里只剩对象条目，且被纳管
+	const pkgs = readSettings(core).packages;
+	assert.equal(pkgs.length, 1);
+	assert.deepEqual(pkgs[0], OBJ);
+	assert.ok(r.addedPackages.some((p) => typeof p === "object" && p.source === OBJ.source));
+	assert.equal(r.borrowedPackages.length, 0);
+	assert.ok(core.loadState().managed.packages.some((p) => typeof p === "object"));
+
+	// 切走后对象条目被精确摘除
+	core.applyToSettings(core.computeTarget(null, cfg), null, undefined);
+	assert.deepEqual(readSettings(core).packages, []);
+});
+
+test("v0.6.0 对象形态条目：裸 spec 为 pi install 本次产物时替换，重复切换同场景幂等", () => {
+	const { core } = tmpBase();
+	const OBJ = { source: "git:github.com/openclaw/agent-skills", skills: ["skills/autoreview"] };
+	const cfg = {
+		common: { packages: [], skills: [] },
+		scenes: { coding: { packages: [OBJ], skills: [] } },
+	};
+	writeSettings(core, { packages: ["git:github.com/openclaw/agent-skills"] });
+	core.applyToSettings(core.computeTarget("coding", cfg), "coding", []);
+	core.applyToSettings(core.computeTarget("coding", cfg), "coding", undefined); // 再切一次同场景：幂等
+	assert.deepEqual(readSettings(core).packages, [OBJ]);
+});
+
+test("v0.6.0 scaffold：预置技能从 assets/scene-skills 复制到 research/writing 场景目录", () => {
+	const { core } = tmpBase();
+	const created = core.scaffold();
+	// research / writing 各预置 2/1 个技能；coding 等场景目录存在但无预置
+	assert.ok(
+		fs.existsSync(path.join(core.paths.scenesRoot, "research", "skills", "arxiv-research", "SKILL.md")),
+		"arxiv-research 预置",
+	);
+	assert.ok(
+		fs.existsSync(path.join(core.paths.scenesRoot, "research", "skills", "openalex-paper-search", "SKILL.md")),
+		"openalex-paper-search 预置",
+	);
+	assert.ok(
+		fs.existsSync(path.join(core.paths.scenesRoot, "writing", "skills", "humanizer", "SKILL.md")),
+		"humanizer 预置",
+	);
+	assert.ok(created.some((c) => c.includes("arxiv-research")));
+	// 幂等：重复 scaffold 不重复复制、不覆盖
+	fs.rmSync(path.join(core.paths.scenesRoot, "research", "skills", "arxiv-research", "SKILL.md"));
+	core.scaffold();
+	assert.ok(!fs.existsSync(path.join(core.paths.scenesRoot, "research", "skills", "arxiv-research", "SKILL.md")));
+});
+
+test("v0.6.0 模板预设：coding 含 pi-simplify + 两个 git 技能包对象形态；office/pm 各有新增", () => {
+	const { core } = tmpBase();
+	core.scaffold();
+	const cfg = core.loadScenes();
+	const codingSpecs = cfg.scenes.coding.packages.map((p) => (typeof p === "string" ? p : p.source));
+	assert.ok(codingSpecs.includes("npm:pi-simplify"));
+	assert.ok(codingSpecs.includes("git:github.com/openclaw/agent-skills"));
+	assert.ok(codingSpecs.includes("git:github.com/anthropics/skills"));
+	// 对象形态带 skills 过滤子集
+	const anth = cfg.scenes.coding.packages.find(
+		(p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills",
+	);
+	assert.ok(Array.isArray(anth.skills) && anth.skills.length === 3);
+	const officeSpecs = cfg.scenes.office.packages.map((p) => (typeof p === "string" ? p : p.source));
+	assert.ok(officeSpecs.includes("git:github.com/anthropics/skills"));
+	assert.ok(cfg.scenes.pm.packages.includes("npm:@juicesharp/rpiv-ask-user-question"));
+});

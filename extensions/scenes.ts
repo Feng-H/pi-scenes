@@ -52,6 +52,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ── 类型 ────────────────────────────────────────────────────
@@ -531,6 +532,20 @@ export function makeCore(baseDir: string) {
 				const inPre = (preInstallPackages ?? oldPkgs).some((x) => sameEntry(x, e));
 				if (!inPre) newManagedPkgs.push(e);
 				else result.borrowedPackages.push(e);
+			} else if (typeof e === "object" && e !== null && pkgs.some((x) => sameResource(x, e))) {
+				// 目标是对象形态（带 skills/extensions 等资源过滤），现存的同包条目是裸 spec：
+				// - 裸 spec 是 pi install 在本次切换中刚写入的（不在 preInstall 快照里）→ 替换为对象形态，
+				//   否则 anthropics/skills 这类多技能包会全量加载，场景级裁剪失效；
+				// - 裸 spec 是用户先前手配的（在快照里）→ 尊重用户全局选择，视为借用。
+				const preExisting = (preInstallPackages ?? oldPkgs).some((x) => sameResource(x, e));
+				if (!preExisting) {
+					pkgs = pkgs.filter((x) => !sameResource(x, e));
+					pkgs.push(e);
+					newManagedPkgs.push(e);
+					result.addedPackages.push(e);
+				} else {
+					result.borrowedPackages.push(e);
+				}
 			} else if (pkgs.some((x) => sameResource(x, e))) {
 				// 同包不同写法（如用户手动 pin 了版本）：视为借用，避免重复注入与重复加载
 				result.borrowedPackages.push(e);
@@ -766,7 +781,12 @@ export function makeCore(baseDir: string) {
 		return { tools, commands };
 	}
 
-	/** 生成模板 scenes.json + 场景 skill 目录骨架（预设均为 npm 真实存在的包，2026-09 核验） */
+	/**
+	 * 生成模板 scenes.json + 场景 skill 目录骨架 + 预置精选技能。
+	 * 预设均为真实存在的包（npm/git，2026-09 核验）；git 技能包用 object form
+	 * 按场景裁剪 skills 子集（anthropics/skills 16M 全量 / openclaw/agent-skills 1.9M）。
+	 * 预置技能 vendored 自高质量开源技能（MIT，见各自 SKILL.md 尾部归属声明）。
+	 */
 	function scaffold(): string[] {
 		const created: string[] = [];
 		const template: ScenesFile = {
@@ -780,20 +800,33 @@ export function makeCore(baseDir: string) {
 			},
 			scenes: {
 				coding: {
-					description: "写代码：实时代码反馈、子代理委派、并行分支",
+					description: "写代码：实时代码反馈、子代理委派、并行分支、变更审查",
 					icon: "💻",
 					packages: [
-					"npm:pi-lens", // LSP/linter/格式化实时代码反馈
-					"npm:pi-subagents", // 单代理委派 + 脚本化多代理工作流
-					"npm:pi-git-worktree", // git worktree 并行开发
+						"npm:pi-lens", // LSP/linter/格式化实时代码反馈
+						"npm:pi-subagents", // 单代理委派 + 脚本化多代理工作流
+						"npm:pi-git-worktree", // git worktree 并行开发
+						"npm:pi-simplify", // 近期变更代码审查（清晰度/一致性/可维护性）
+						{
+							source: "git:github.com/openclaw/agent-skills", // OpenClaw 官方编码工作流技能（1.9M）
+							skills: ["skills/autoreview", "skills/handoff"], // 独立代码审查 / 跨代理任务交接
+						},
+						{
+							source: "git:github.com/anthropics/skills", // Anthropic 官方技能库（16M），按需子集
+							skills: ["skills/frontend-design", "skills/webapp-testing", "skills/mcp-builder"],
+						},
 					],
 					skills: ["~/.pi/agent/scenes/coding/skills"],
 				},
 				office: {
-					description: "办公：文档处理与日常事务",
+					description: "办公：文档解析与生成、内部沟通",
 					icon: "📄",
 					packages: [
-					"npm:pi-docparser", // PDF/Office 文档解析抽取
+						"npm:pi-docparser", // PDF/Office 文档解析抽取
+						{
+							source: "git:github.com/anthropics/skills", // 官方办公四件套 + 内部沟通文档模板
+							skills: ["skills/docx", "skills/pptx", "skills/xlsx", "skills/pdf", "skills/internal-comms"],
+						},
 					],
 					skills: ["~/.pi/agent/scenes/office/skills"],
 				},
@@ -801,35 +834,40 @@ export function makeCore(baseDir: string) {
 					description: "产品经理：竞品调研、目标规划与需求跟踪",
 					icon: "🎯",
 					packages: [
-					"npm:pi-web-access", // 网页搜索/抓取/PDF/YouTube（竞品与市场调研）
-					"npm:pi-goal-x", // /goal 目标规划 + 独立完成度审计（roadmap/需求跟踪）
-					"npm:@juicesharp/rpiv-todo", // 需求/任务清单实时 overlay（抗 /reload 与压缩）
+						"npm:pi-web-access", // 网页搜索/抓取/PDF/YouTube（竞品与市场调研）
+						"npm:pi-goal-x", // /goal 目标规划 + 独立完成度审计（roadmap/需求跟踪）
+						"npm:@juicesharp/rpiv-todo", // 需求/任务清单实时 overlay（抗 /reload 与压缩）
+						"npm:@juicesharp/rpiv-ask-user-question", // 结构化提问：类型化选项代替自由猜测（需求澄清）
 					],
 					skills: ["~/.pi/agent/scenes/pm/skills"],
 				},
 				research: {
-					description: "咨询调研：多源检索、并行多角度深挖",
+					description: "咨询调研：多源检索、并行多角度深挖、学术文献",
 					icon: "🔍",
 					packages: [
-					"npm:pi-web-access", // 搜索/URL 抓取/PDF/视频理解（调研核心）
-					"npm:pi-subagents", // 多角度并行调研（每个子代理一源）
+						"npm:pi-web-access", // 搜索/URL 抓取/PDF/视频理解（调研核心）
+						"npm:pi-subagents", // 多角度并行调研（每个子代理一源）
 					],
-					skills: ["~/.pi/agent/scenes/research/skills"],
+					skills: ["~/.pi/agent/scenes/research/skills"], // scaffold 预置 arxiv-research / openalex-paper-search
 				},
 				writing: {
 					description: "写作：素材检索、事实核查、文体打磨",
 					icon: "📝",
 					packages: [
-					"npm:pi-web-access", // 素材检索与事实核查（引用溯源）
+						"npm:pi-web-access", // 素材检索与事实核查（引用溯源）
+						{
+							source: "git:github.com/anthropics/skills", // 官方文档共创工作流（三阶段：上下文采集→迭代精炼→读者验证）
+							skills: ["skills/doc-coauthoring"],
+						},
 					],
-					skills: ["~/.pi/agent/scenes/writing/skills"],
+					skills: ["~/.pi/agent/scenes/writing/skills"], // scaffold 预置 humanizer
 				},
 				data: {
 					description: "数据分析：表格抽取、MCP 接数据库/BI",
 					icon: "📊",
 					packages: [
-					"npm:pi-docparser", // Excel/CSV/PDF 表格结构化抽取
-					"npm:pi-mcp-adapter", // 接任意 MCP server（数据库/BI/内部数据服务）
+						"npm:pi-docparser", // Excel/CSV/PDF 表格结构化抽取
+						"npm:pi-mcp-adapter", // 接任意 MCP server（数据库/BI/内部数据服务）
 					],
 					skills: ["~/.pi/agent/scenes/data/skills"],
 				},
@@ -845,6 +883,27 @@ export function makeCore(baseDir: string) {
 				fs.mkdirSync(dir, { recursive: true });
 				created.push(dir);
 			}
+		}
+		// 预置精选技能：从包内 assets/scene-skills/<场景>/ 复制到场景 skill 目录。
+		// 仅在目标不存在时写入（幂等，不覆盖用户已有同名技能）；复制后归用户所有，可改可删。
+		try {
+			const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+			const assetsRoot = path.join(pkgRoot, "assets", "scene-skills");
+			if (fs.existsSync(assetsRoot)) {
+				for (const scene of fs.readdirSync(assetsRoot)) {
+					const srcScene = path.join(assetsRoot, scene);
+					if (!fs.statSync(srcScene).isDirectory()) continue;
+					for (const skill of fs.readdirSync(srcScene)) {
+						const src = path.join(srcScene, skill);
+						const dst = path.join(paths.scenesRoot, scene, "skills", skill);
+						if (!fs.existsSync(path.join(src, "SKILL.md")) || fs.existsSync(dst)) continue;
+						fs.cpSync(src, dst, { recursive: true });
+						created.push(dst);
+					}
+				}
+			}
+		} catch {
+			// 资产复制失败不阻断 scaffold（如测试环境无 assets）
 		}
 		return created;
 	}

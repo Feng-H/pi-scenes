@@ -54,17 +54,24 @@ Then `/reload` and `/scene` is live.
 /scene evolve auto # toggle auto-apply at session end (opt-in)
 ```
 
-First run of `/scene` offers to generate the template. It ships with **seven preset scenes + common** (all packages verified on npm, 2026-09):
+First run of `/scene` offers to generate the template. It ships with **seven preset scenes + common** — a curated best-practice collection (all packages verified on npm/GitHub, 2026-09). v0.6.0 upgrades the presets with a full skill layer: git skill bundles install per scene with object-form resource filters, and research/writing ship vendored starter skills:
 
-| Layer | Preset packages | Why |
+| Scene | Extensions | Skills |
 |---|---|---|
-| `common` | `npm:pi-scenes`, `npm:pi-carryover` | the switcher itself + cross-session carryover — always needed |
-| `coding` | `npm:pi-lens`, `npm:pi-subagents`, `npm:pi-git-worktree` | live LSP/lint feedback, delegated sub-agents, parallel worktrees |
-| `office` | `npm:pi-docparser` | PDF/Office document parsing |
-| `pm` | `npm:pi-web-access`, `npm:pi-goal-x`, `npm:@juicesharp/rpiv-todo` | market/competitor research, goal planning & audit, live todo overlay |
-| `research` | `npm:pi-web-access`, `npm:pi-subagents` | multi-source search/fetch/PDF/video, parallel multi-angle digging |
-| `writing` | `npm:pi-web-access` | source gathering & fact-checking with citations |
-| `data` | `npm:pi-docparser`, `npm:pi-mcp-adapter` | table extraction, connect any MCP server (DB/BI) |
+| `common` | `npm:pi-scenes`, `npm:pi-carryover` | — (your own dir) |
+| `coding` | `npm:pi-lens`, `npm:pi-subagents`, `npm:pi-git-worktree`, `npm:pi-simplify` | `openclaw/agent-skills` → autoreview, handoff；`anthropics/skills` → frontend-design, webapp-testing, mcp-builder |
+| `office` | `npm:pi-docparser` | `anthropics/skills` → docx, pptx, xlsx, pdf, internal-comms |
+| `pm` | `npm:pi-web-access`, `npm:pi-goal-x`, `npm:@juicesharp/rpiv-todo`, `npm:@juicesharp/rpiv-ask-user-question` | — |
+| `research` | `npm:pi-web-access`, `npm:pi-subagents` | 预置：arxiv-research, openalex-paper-search |
+| `writing` | `npm:pi-web-access` | `anthropics/skills` → doc-coauthoring；预置：humanizer |
+| `data` | `npm:pi-docparser`, `npm:pi-mcp-adapter` | — |
+
+Design notes:
+
+- **Skills over extensions** — skills are progressively disclosed (only name+description stay in context, ~30 tokens each), while extensions inject full tool definitions. The template leans on the cheap layer for scene depth.
+- **One git bundle, many scenes** — `git:github.com/anthropics/skills` is declared with a different `skills` filter per scene; the clone is shared, and switching swaps only the settings entry.
+- **Vendored starter skills** (`assets/scene-skills/`, MIT with attribution) — research/writing had no pi-native skill packages, so scaffold copies curated ports (blader/humanizer, Hermes arXiv/OpenAlex) into your scene skill dirs. They are yours: edit or delete freely.
+- **Object-form authority (v0.6.0 core fix)** — when a scene declares `{source, skills:[...]}` and a plain spec for the same package appears (e.g. written by `pi install` during the switch), the scene's filtered form replaces it, so multi-skill bundles never load unfiltered. A plain spec you configured yourself is still respected (borrowed, never taken over).
 
 Edit it to fit your setup (each scene also gets a skill dir scaffold at `~/.pi/agent/scenes/<name>/skills/`):
 
@@ -397,7 +404,7 @@ managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packag
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test，20 用例：注入/回收 + 用量/进化 + 异写法冲突防护 + command 层冒烟（无需 TUI）
+npm test          # node:test，25 用例：注入/回收 + 用量/进化 + 异写法冲突防护 + 对象形态替换语义 + scaffold 预置技能 + command 层冒烟（无需 TUI）
 ```
 
 测试用 `PI_SCENES_DIR` 环境变量隔离基目录，不碰真实 `~/.pi/agent`。
