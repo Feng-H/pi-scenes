@@ -358,3 +358,4 @@ test("applyProposals：生成新配置且不动原对象", () => {
 	assert.deepEqual(cfg.scenes.coding.packages, ["npm:pi-cold"]); // 原 cfg 未被改
 	assert.deepEqual(cfg.scenes.coding.skills, ["~/skills-dead"]);
 });
+

@@ -910,7 +910,7 @@ export default function (pi: ExtensionAPI) {
 		// 缺失包：确认后逐个 pi install（全局 scope pi 不自动装，必须显式装）
 		// 身份级判定：settings 已手配同包异写法（如本地路径）→ 视为可用，跳过安装；
 		// 否则 pi install 会向 settings 追加第二种写法 → 同一扩展加载两份 → pi 启动冲突退出
-		const missing = core.findMissingPackages(target, prePkgs);
+		const missing = core.findMissingPackages(target.packages, prePkgs);
 		let preInstallPackages: PackageEntry[] | undefined;
 		if (missing.length > 0) {
 			const ok = await ctx.ui.confirm(
@@ -930,7 +930,7 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 			const postPkgs = (readJson<Record<string, unknown>>(core.paths.settingsFile, {}).packages ?? []) as PackageEntry[];
-		const still = core.findMissingPackages(target, postPkgs);
+			const still = core.findMissingPackages(target.packages, postPkgs);
 			if (still.length > 0) {
 				ctx.ui.notify(`仍有包未安装：${still.map(specOf).join(", ")}，已中止切换`, "error");
 				return;
