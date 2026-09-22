@@ -21,7 +21,6 @@
  * 命令：
  *   /scene              弹出选择器（当前场景高亮 ●）
  *   /scene <name>       切换到指定场景（参数 Tab 补全：/scene c<Tab> → /scene coding）
- *   /scenes             同 /scene（复数别名，误输也能用；补全行为一致）
  *   /scene off|none     仅保留通用层（关闭场景）
  *   /scene status       显示当前激活与生效资源
  *   /scene init         生成模板 scenes.json 与场景 skill 目录骨架
@@ -1147,9 +1146,7 @@ export default function (pi: ExtensionAPI) {
 		},
 	};
 
-	// 主命令 + 复数别名：/scenes 与 /scene 完全同义（用户肌肉记忆常多打一个 s）
 	pi.registerCommand("scene", sceneCommand);
-	pi.registerCommand("scenes", sceneCommand);
 
 	// ── v0.2：用量采集与自进化 ──────────────────────────────
 

@@ -192,7 +192,7 @@ test("徽标 icon 定制：scenes.json 配 icon → '💻 coding'，未配 → �
 	assert.equal(statuses.get("pi-scene"), "◆ plain", "未配 icon 的场景应回退 '◆ plain'");
 });
 
-test("参数 Tab 补全：场景名+子命令全量列出、前缀过滤、多词子命令；/scenes 别名同源", async () => {
+test("参数 Tab 补全：场景名+子命令全量列出、前缀过滤、多词子命令", async () => {
 	fs.writeFileSync(
 		path.join(dir, "scenes.json"),
 		JSON.stringify({
@@ -211,7 +211,7 @@ test("参数 Tab 补全：场景名+子命令全量列出、前缀过滤、多�
 		registerTool: () => {},
 		on: () => {},
 	});
-	assert.deepEqual(Object.keys(commands).sort(), ["scene", "scenes"], "应同时注册 /scene 与 /scenes 别名");
+	assert.deepEqual(Object.keys(commands).sort(), ["scene"], "只注册 /scene（v0.5.0 起移除 /scenes 复数别名）");
 	const gc = commands.scene.getArgumentCompletions;
 	assert.equal(typeof gc, "function", "命令应携带 getArgumentCompletions");
 
@@ -232,9 +232,6 @@ test("参数 Tab 补全：场景名+子命令全量列出、前缀过滤、多�
 	assert.deepEqual(gc("evolve a").map((i) => i.value), ["evolve auto"]);
 	// 无匹配 → null
 	assert.equal(gc("zzz"), null);
-	// 别名与主命令共享同一补全函数与 handler
-	assert.equal(commands.scenes.getArgumentCompletions, gc);
-	assert.equal(commands.scenes.handler, commands.scene.handler);
 	// 提示行动态拼入场景名 + Tab 引导
 	assert.ok(String(commands.scene.description).includes("coding") && String(commands.scene.description).includes("research"));
 	assert.ok(String(commands.scene.description).includes("Tab"));
