@@ -1076,13 +1076,23 @@ export function makeCore(baseDir: string, projectDir?: string) {
 					skills: ["~/.pi/agent/scenes/data/skills"],
 					prompts: ["~/.pi/agent/scenes/data/prompts"], // scaffold 预置 data-audit 数据审计
 				},
+				learning: {
+					description: "学习：知识内化、费曼检验、闪卡复习",
+					icon: "📚",
+					packages: [
+						"npm:pi-web-access", // 查教程/文档/视频理解（学习材料获取）
+						"npm:pi-subagents", // 并行学习：子代理各读一种资料再汇总多视角笔记
+					],
+					skills: ["~/.pi/agent/scenes/learning/skills"],
+					prompts: ["~/.pi/agent/scenes/learning/prompts"], // scaffold 预置 feynman / socratic / flashcards
+				},
 			},
 		};
 		if (!fs.existsSync(paths.scenesFile)) {
 			writeJson(paths.scenesFile, template);
 			created.push(paths.scenesFile);
 		}
-		for (const s of ["common", "coding", "office", "pm", "research", "writing", "data"]) {
+		for (const s of ["common", "coding", "office", "pm", "research", "writing", "data", "learning"]) {
 			for (const kind of ["skills", "prompts"] as const) {
 				const dir = path.join(paths.scenesRoot, s, kind);
 				if (!fs.existsSync(dir)) {

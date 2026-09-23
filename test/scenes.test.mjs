@@ -53,7 +53,7 @@ test("scaffold 生成模板与目录（含 7 个预设场景）", () => {
 	const { core } = tmpBase();
 	const created = core.scaffold();
 	assert.ok(created.some((c) => c.endsWith("scenes.json")));
-	for (const s of ["common", "coding", "office", "pm", "research", "writing", "data"]) {
+	for (const s of ["common", "coding", "office", "pm", "research", "writing", "data", "learning"]) {
 		assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, s, "skills")), s);
 	}
 	// 预设包均为真实 spec
@@ -613,12 +613,15 @@ test("v0.8 scaffold：模板 scenes.json 含 prompts 字段 + prompts 目录骨�
 		assert.ok(Array.isArray(def.prompts) && def.prompts.length > 0, `${s} prompts`);
 	}
 	// 2) prompts 目录骨架
-	for (const s of ["common", "coding", "office", "pm", "research", "writing", "data"]) {
+	for (const s of ["common", "coding", "office", "pm", "research", "writing", "data", "learning"]) {
 		assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, s, "prompts")), `${s}/prompts`);
 	}
 	// 3) 预置模板从包内 assets/scene-prompts 复制（幂等，不覆盖已有）
 	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md")));
 	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "research", "prompts", "deep-dive.md")));
+	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "learning", "prompts", "feynman.md")));
+	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "learning", "prompts", "socratic.md")));
+	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "learning", "prompts", "flashcards.md")));
 	// 幂等：用户改过的文件不被 scaffold 覆盖
 	const mine = path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md");
 	fs.writeFileSync(mine, "用户自定义内容");

@@ -59,7 +59,7 @@ Then `/reload` and `/scene` is live.
 /scene evolve auto # toggle auto-apply at session end (opt-in)
 ```
 
-First run of `/scene` offers to generate the template. It ships with **seven preset scenes + common** — a curated best-practice collection (all packages verified on npm/GitHub, 2026-09). v0.6.0 upgrades the presets with a full skill layer: git skill bundles install per scene with object-form resource filters, and research/writing ship vendored starter skills:
+First run of `/scene` offers to generate the template. It ships with **eight preset scenes + common** — a curated best-practice collection (all packages verified on npm/GitHub, 2026-09). v0.6.0 upgrades the presets with a full skill layer: git skill bundles install per scene with object-form resource filters, and research/writing ship vendored starter skills:
 
 | Scene | Extensions | Skills | Prompt templates (v0.8) |
 |---|---|---|---|
@@ -70,6 +70,7 @@ First run of `/scene` offers to generate the template. It ships with **seven pre
 | `research` | `npm:pi-web-access`, `npm:pi-subagents` | 预置：arxiv-research, openalex-paper-search | `/deep-dive` |
 | `writing` | `npm:pi-web-access` | `anthropics/skills` → doc-coauthoring；预置：humanizer | `/fact-check` |
 | `data` | `npm:pi-docparser`, `npm:pi-mcp-adapter` | — | `/data-audit` |
+| `learning` | `npm:pi-web-access`, `npm:pi-subagents` | — | `/feynman`, `/socratic`, `/flashcards` |
 
 Each preset template is a fixed procedure that forbids step-skipping (e.g. `/pre-commit` = build → test → diff review → commit message, each step ✅/❌ with evidence). After switching scenes, try the scene's template command directly; drop your own `.md` files into `~/.pi/agent/scenes/<name>/prompts/` to add more.
 
@@ -334,7 +335,7 @@ pi install git:github.com/Feng-H/pi-scenes
 /scene evolve auto # 开关：会话结束自动应用（opt-in）
 ```
 
-首次运行 `/scene` 会询问是否生成模板，生成后编辑场景定义。模板内置 **七个预设场景 + 通用层**（包均在 npm 核验存在，2026-09）：
+首次运行 `/scene` 会询问是否生成模板，生成后编辑场景定义。模板内置 **八个预设场景 + 通用层**（包均在 npm 核验存在，2026-09）：
 
 | 层 | 预设 packages | 理由 |
 |---|---|---|
@@ -345,8 +346,9 @@ pi install git:github.com/Feng-H/pi-scenes
 | `research` | `npm:pi-web-access`、`npm:pi-subagents` | 多源搜索/抓取/PDF/视频，并行多角度深挖 |
 | `writing` | `npm:pi-web-access` | 素材检索与事实核查（引用溯源） |
 | `data` | `npm:pi-docparser`、`npm:pi-mcp-adapter` | 表格结构化抽取、接任意 MCP server（数据库/BI） |
+| `learning` | `npm:pi-web-access`、`npm:pi-subagents` | 学习材料获取（文档/教程/视频）、并行多视角学习 |
 
-v0.8 起每个预设场景还携带一个流程模板（coding→`/pre-commit`、office→`/doc-from-notes`、pm→`/prd-skeleton`、research→`/deep-dive`、writing→`/fact-check`、data→`/data-audit`），切换后直接可用；自己加模板只需往 `~/.pi/agent/scenes/<名>/prompts/` 丢 `.md` 文件。
+v0.8 起每个预设场景还携带流程模板（coding→`/pre-commit`、office→`/doc-from-notes`、pm→`/prd-skeleton`、research→`/deep-dive`、writing→`/fact-check`、data→`/data-audit`；v0.9 learning 场景→`/feynman` 费曼内化 + `/socratic` 苏格拉底检验 + `/flashcards` 闪卡复习，三件套），切换后直接可用；自己加模板只需往 `~/.pi/agent/scenes/<名>/prompts/` 丢 `.md` 文件。
 
 每个场景同时生成 skill / prompts 目录骨架 `~/.pi/agent/scenes/<名>/{skills,prompts}/`，按需编辑：
 
