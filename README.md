@@ -21,7 +21,8 @@ active resources = common layer ∪ current scene
 - **Scene layers** — per-scenario bundles (coding / office / writing…), loaded only while active
 - **Project-scoped by default (v0.7)** — `/scene office` writes activation entries to `<cwd>/.pi/settings.json`, so a scene belongs to *this* directory only; opening a fresh directory starts clean. `--global` keeps the ≤0.6 all-projects behavior
 - **Asset/activation split (v0.7)** — packages are installed once globally and shared across projects; git skill bundles are pinned as zero-exposure *anchors* (`{source, autoload:false, skills:[]}`) in user settings, while the project layer writes a *delta* (`{source, autoload:false, skills:[...]}`) that enables just the scene's whitelist — one clone, per-project curation, via pi's native delta mechanism
-- Switching rewrites `packages`/`skills` in `settings.json`, then `ctx.reload()` hot-reloads — **no pi restart, session untouched**
+- **Scene-scoped prompt templates (v0.8)** — each scene can also bundle workflow templates (`prompts` field): fixed checklists that pin down step-by-step procedures so the model can't take shortcuts. Scene = **tools + skills + workflow templates** as one unit
+- Switching rewrites `packages`/`skills` in `settings.json`, then `ctx.reload()` hot-reloads — **no pi restart, session untouched**; prompt templates take a different path: injected via pi's `resources_discover` event with **zero settings writes**
 - Every switch stamps a persistent **status-bar badge** (`◆ coding`, or a per-scene `icon` like `💻 coding`) so the bar always answers *"which scene am I in"* — restored at session start, cleared by `/scene off`
 - **Zero-memory discoverability (v0.4.1)** — the command hint lists your scene names, and Tab completion shows every scene (icon + description + current marker) plus subcommands: type `/scene c` + Tab → `/scene coding`
 - The data model reserves an `extends` chain (with cycle detection) for future **parent → child scene** hierarchies
@@ -60,15 +61,17 @@ Then `/reload` and `/scene` is live.
 
 First run of `/scene` offers to generate the template. It ships with **seven preset scenes + common** — a curated best-practice collection (all packages verified on npm/GitHub, 2026-09). v0.6.0 upgrades the presets with a full skill layer: git skill bundles install per scene with object-form resource filters, and research/writing ship vendored starter skills:
 
-| Scene | Extensions | Skills |
-|---|---|---|
-| `common` | `npm:pi-scenes`, `npm:pi-carryover` | — (your own dir) |
-| `coding` | `npm:pi-lens`, `npm:pi-subagents`, `npm:pi-git-worktree`, `npm:pi-simplify` | `openclaw/agent-skills` → autoreview, handoff；`anthropics/skills` → frontend-design, webapp-testing, mcp-builder |
-| `office` | `npm:pi-docparser` | `anthropics/skills` → docx, pptx, xlsx, pdf, internal-comms |
-| `pm` | `npm:pi-web-access`, `npm:pi-goal-x`, `npm:@juicesharp/rpiv-todo`, `npm:@juicesharp/rpiv-ask-user-question` | — |
-| `research` | `npm:pi-web-access`, `npm:pi-subagents` | 预置：arxiv-research, openalex-paper-search |
-| `writing` | `npm:pi-web-access` | `anthropics/skills` → doc-coauthoring；预置：humanizer |
-| `data` | `npm:pi-docparser`, `npm:pi-mcp-adapter` | — |
+| Scene | Extensions | Skills | Prompt templates (v0.8) |
+|---|---|---|---|
+| `common` | `npm:pi-scenes`, `npm:pi-carryover` | — (your own dir) | — |
+| `coding` | `npm:pi-lens`, `npm:pi-subagents`, `npm:pi-git-worktree`, `npm:pi-simplify` | `openclaw/agent-skills` → autoreview, handoff；`anthropics/skills` → frontend-design, webapp-testing, mcp-builder | `/pre-commit` |
+| `office` | `npm:pi-docparser` | `anthropics/skills` → docx, pptx, xlsx, pdf, internal-comms | `/doc-from-notes` |
+| `pm` | `npm:pi-web-access`, `npm:pi-goal-x`, `npm:@juicesharp/rpiv-todo`, `npm:@juicesharp/rpiv-ask-user-question` | — | `/prd-skeleton` |
+| `research` | `npm:pi-web-access`, `npm:pi-subagents` | 预置：arxiv-research, openalex-paper-search | `/deep-dive` |
+| `writing` | `npm:pi-web-access` | `anthropics/skills` → doc-coauthoring；预置：humanizer | `/fact-check` |
+| `data` | `npm:pi-docparser`, `npm:pi-mcp-adapter` | — | `/data-audit` |
+
+Each preset template is a fixed procedure that forbids step-skipping (e.g. `/pre-commit` = build → test → diff review → commit message, each step ✅/❌ with evidence). After switching scenes, try the scene's template command directly; drop your own `.md` files into `~/.pi/agent/scenes/<name>/prompts/` to add more.
 
 Design notes:
 
@@ -205,6 +208,9 @@ In short: **installed forever, loaded per scene**. One caveat: extensions you in
    ├─ missing packages → confirm → `pi install` each (global scope isn't auto-installed)
    ├─ rewrite settings.json (see "Injection & reclamation")
    └─ await ctx.reload()  → extensions/skills hot-reload, session uninterrupted
+                         ↘ pi asks resources_discover → scene's prompt templates
+                           appear as /commands (no settings writes; switching
+                           away stops returning them → they vanish)
 ```
 
 ### Injection & reclamation (your manual config stays untouched)
@@ -222,7 +228,7 @@ In short: **installed forever, loaded per scene**. One caveat: extensions you in
 | `scenes.<name>.packages` | accepts `"npm:<pkg>"`, `"git:github.com/u/r"`, local paths, and object form (resource filtering, same grammar as pi settings) |
 | `scenes.<name>.icon` | status-bar badge & picker prefix (emoji recommended; default `◆`) |
 | `scenes.<name>.skills` | paths/directories, `~` expanded |
-| `scenes.<name>.prompts` | prompt-template files/directories (`\u200b.md`), `~` expanded; injected via `resources_discover`, never written to settings (v0.8) |
+| `scenes.<name>.prompts` | prompt-template files/directories (`.md`), `~` expanded; injected via `resources_discover`, never written to settings (v0.8) |
 | `scenes.<name>.extends` | 🧪 inherit a parent scene (union merge + cycle detection) — forward-compatible entry for parent→child hierarchies |
 | `evolve.patience` / `evolve.absorbThreshold` / `evolve.skillUnusedThreshold` | self-evolution tunables (see "Self-evolution") |
 
@@ -259,7 +265,7 @@ Before uninstalling, `/scene off` and prune entries you don't want to keep from 
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test, 20 cases: injection/reclaim + usage/evolution + conflict guards + command-layer smoke (no TUI needed)
+npm test          # node:test, 32 cases: injection/reclaim + usage/evolution + conflict guards + command-layer smoke (no TUI needed)
 ```
 
 Tests isolate via the `PI_SCENES_DIR` env var — your real `~/.pi/agent` is never touched.
@@ -272,8 +278,8 @@ MIT
 
 # 中文说明
 
-> [pi](https://pi.dev) 场景切换器：**通用层 + 分场景层**的 extension / skill 打包切换。
-> 写代码时 `/scene coding`，办公时 `/scene office`——一键换装，热重载生效。
+> [pi](https://pi.dev) 场景切换器：**通用层 + 分场景层**的 extension / skill / prompt 模板打包切换。
+> 写代码时 `/scene coding`，办公时 `/scene office`——一键换装，热重载生效；v0.8 起场景还携带流程模板（`/pre-commit`、`/deep-dive`…），步骤清单固化、AI 无法跳步。
 
 ## 这是什么
 
@@ -290,7 +296,8 @@ pi 的 `packages` / `skills` 是全局平铺的：所有已安装扩展、所有
 - **场景层**：每个场景自己的一组 extension + skill，激活才加载
 - **默认项目级（v0.7）**——`/scene office` 把激活条目写进 `<cwd>/.pi/settings.json`，场景只属于当前目录；新建目录零残留、干净启动。`--global` 保留 ≤0.6 的全目录生效语义
 - **资产/激活分离（v0.7）**——包只全局装一份、所有项目共享；git 技能包在全局层钉为零暴露**锚点**（`{source, autoload:false, skills:[]}`），项目层写 **delta**（`{source, autoload:false, skills:[白名单]}`）按场景启用——借 pi 原生 delta 机制做到「一份克隆、每项目各自的精选」
-- 切换 = 改写 `settings.json` 的 `packages`/`skills` → `ctx.reload()` 热重载，**无需重启 pi**
+- **场景化 prompt 模板（v0.8）**——每个场景可携带流程模板（`prompts` 字段）：把固定流程的步骤清单固化成 `/命令`，模型无法挑最快路径跳步。场景成为**工具 + 技能 + 流程模板**三位一体
+- 切换 = 改写 `settings.json` 的 `packages`/`skills` → `ctx.reload()` 热重载，**无需重启 pi**；prompt 模板走另一条路：经 pi 的 `resources_discover` 事件动态注入，**零 settings 写入**
 - 每次切换成功后状态栏常驻**场景徽标**（`◆ coding`，或每场景自定义 `icon` 如 `💻 coding`），状态栏随时回答「我现在在哪个场景」——会话启动自动恢复，`/scene off` 清除
 - **零记忆可发现性（v0.4.1）**——命令提示行直接拼入场景名清单；Tab 补全列出全部场景（icon + 描述 + 当前标记）与子命令：`/scene c` + Tab → `/scene coding`
 - 数据模型预留 `extends` 继承链（带环检测），为将来「主场景 → 子场景」层级铺路
@@ -339,7 +346,9 @@ pi install git:github.com/Feng-H/pi-scenes
 | `writing` | `npm:pi-web-access` | 素材检索与事实核查（引用溯源） |
 | `data` | `npm:pi-docparser`、`npm:pi-mcp-adapter` | 表格结构化抽取、接任意 MCP server（数据库/BI） |
 
-每个场景同时生成 skill 目录骨架 `~/.pi/agent/scenes/<名>/skills/`，按需编辑：
+v0.8 起每个预设场景还携带一个流程模板（coding→`/pre-commit`、office→`/doc-from-notes`、pm→`/prd-skeleton`、research→`/deep-dive`、writing→`/fact-check`、data→`/data-audit`），切换后直接可用；自己加模板只需往 `~/.pi/agent/scenes/<名>/prompts/` 丢 `.md` 文件。
+
+每个场景同时生成 skill / prompts 目录骨架 `~/.pi/agent/scenes/<名>/{skills,prompts}/`，按需编辑：
 
 ```jsonc
 // ~/.pi/agent/scenes.json
@@ -468,6 +477,8 @@ pi-scenes 绝不改第三方包的全局配置——徽标是它放到状态栏�
    ├─ 缺失的包 → confirm 后逐个 `pi install`（全局 scope pi 不自动装）
    ├─ 改写 settings.json（见「注入与回收」）
    └─ await ctx.reload()  → 扩展/skill 热重载，会话不中断
+                         ↘ pi 询问 resources_discover → 场景流程模板出现为
+                           /命令（零 settings 写入；切走后不再返回 → 自动消失）
 ```
 
 ### 注入与回收（不动你的手工配置）
@@ -522,7 +533,7 @@ managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packag
 
 ```bash
 git clone https://github.com/Feng-H/pi-scenes && cd pi-scenes
-npm test          # node:test，25 用例：注入/回收 + 用量/进化 + 异写法冲突防护 + 对象形态替换语义 + scaffold 预置技能 + command 层冒烟（无需 TUI）
+npm test          # node:test，32 用例：注入/回收 + 用量/进化 + 异写法冲突防护 + 对象形态替换语义 + scaffold 预置技能 + command 层冒烟（无需 TUI）
 ```
 
 测试用 `PI_SCENES_DIR` 环境变量隔离基目录，不碰真实 `~/.pi/agent`。
