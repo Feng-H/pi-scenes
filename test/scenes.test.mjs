@@ -391,12 +391,12 @@ test("v0.6.0 对象形态条目：pi install 写入裸 spec 后，场景声明�
 
 test("v0.6.0 对象形态条目：裸 spec 为 pi install 本次产物时替换，重复切换同场景幂等", () => {
 	const { core } = tmpBase();
-	const OBJ = { source: "git:github.com/openclaw/agent-skills", skills: ["skills/autoreview"] };
+	const OBJ = { source: "git:github.com/anthropics/skills", skills: ["skills/docx"] };
 	const cfg = {
 		common: { packages: [], skills: [] },
 		scenes: { coding: { packages: [OBJ], skills: [] } },
 	};
-	writeSettings(core, { packages: ["git:github.com/openclaw/agent-skills"] });
+	writeSettings(core, { packages: ["git:github.com/anthropics/skills"] });
 	core.applyToSettings(core.computeTarget("coding", cfg), "coding", []);
 	core.applyToSettings(core.computeTarget("coding", cfg), "coding", undefined); // 再切一次同场景：幂等
 	assert.deepEqual(readSettings(core).packages, [OBJ]);
@@ -425,14 +425,14 @@ test("v0.6.0 scaffold：预置技能从 assets/scene-skills 复制到 research/w
 	assert.ok(!fs.existsSync(path.join(core.paths.scenesRoot, "research", "skills", "arxiv-research", "SKILL.md")));
 });
 
-test("v0.6.0 模板预设：coding 含 pi-simplify + 两个 git 技能包对象形态；office/pm 各有新增", () => {
+test("v0.6.0 模板预设：coding 含 pi-simplify + anthropics/skills 对象形态；office/pm 各有新增", () => {
 	const { core } = tmpBase();
 	core.scaffold();
 	const cfg = core.loadScenes();
 	const codingSpecs = cfg.scenes.coding.packages.map((p) => (typeof p === "string" ? p : p.source));
 	assert.ok(codingSpecs.includes("npm:pi-simplify"));
-	assert.ok(codingSpecs.includes("git:github.com/openclaw/agent-skills"));
 	assert.ok(codingSpecs.includes("git:github.com/anthropics/skills"));
+	assert.ok(!codingSpecs.includes("git:github.com/openclaw/agent-skills"), "v0.8.1 移除 openclaw（项目专用库，非通用）");
 	// 对象形态带 skills 过滤子集
 	const anth = cfg.scenes.coding.packages.find(
 		(p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills",

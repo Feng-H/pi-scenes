@@ -984,7 +984,9 @@ export function makeCore(baseDir: string, projectDir?: string) {
 	/**
 	 * 生成模板 scenes.json + 场景 skill 目录骨架 + 预置精选技能。
 	 * 预设均为真实存在的包（npm/git，2026-09 核验）；git 技能包用 object form
-	 * 按场景裁剪 skills 子集（anthropics/skills 16M 全量 / openclaw/agent-skills 1.9M）。
+	 * 按场景裁剪 skills 子集（anthropics/skills 16M 全量）。曾用 openclaw/agent-skills
+	 * （v0.8.1 移除：定位为 OpenClaw 项目专用工作流库而非通用编码技能；autoreview/handoff
+	 * 的职责已由 pi-simplify / pi-subagents 覆盖）。
 	 * 预置技能 vendored 自高质量开源技能（MIT，见各自 SKILL.md 尾部归属声明）。
 	 */
 	function scaffold(): string[] {
@@ -1008,10 +1010,6 @@ export function makeCore(baseDir: string, projectDir?: string) {
 						"npm:pi-subagents", // 单代理委派 + 脚本化多代理工作流
 						"npm:pi-git-worktree", // git worktree 并行开发
 						"npm:pi-simplify", // 近期变更代码审查（清晰度/一致性/可维护性）
-						{
-							source: "git:github.com/openclaw/agent-skills", // OpenClaw 官方编码工作流技能（1.9M）
-							skills: ["skills/autoreview", "skills/handoff"], // 独立代码审查 / 跨代理任务交接
-						},
 						{
 							source: "git:github.com/anthropics/skills", // Anthropic 官方技能库（16M），按需子集
 							skills: ["skills/frontend-design", "skills/webapp-testing", "skills/mcp-builder"],

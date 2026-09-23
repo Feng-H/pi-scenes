@@ -64,7 +64,7 @@ First run of `/scene` offers to generate the template. It ships with **seven pre
 | Scene | Extensions | Skills | Prompt templates (v0.8) |
 |---|---|---|---|
 | `common` | `npm:pi-scenes`, `npm:pi-carryover` | — (your own dir) | — |
-| `coding` | `npm:pi-lens`, `npm:pi-subagents`, `npm:pi-git-worktree`, `npm:pi-simplify` | `openclaw/agent-skills` → autoreview, handoff；`anthropics/skills` → frontend-design, webapp-testing, mcp-builder | `/pre-commit` |
+| `coding` | `npm:pi-lens`, `npm:pi-subagents`, `npm:pi-git-worktree`, `npm:pi-simplify` | `anthropics/skills` → frontend-design, webapp-testing, mcp-builder | `/pre-commit` |
 | `office` | `npm:pi-docparser` | `anthropics/skills` → docx, pptx, xlsx, pdf, internal-comms | `/doc-from-notes` |
 | `pm` | `npm:pi-web-access`, `npm:pi-goal-x`, `npm:@juicesharp/rpiv-todo`, `npm:@juicesharp/rpiv-ask-user-question` | — | `/prd-skeleton` |
 | `research` | `npm:pi-web-access`, `npm:pi-subagents` | 预置：arxiv-research, openalex-paper-search | `/deep-dive` |
