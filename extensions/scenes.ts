@@ -3,7 +3,22 @@
  *
  * 核心思想：
  *   生效资源 = 通用层(common) ∪ 当前场景(scene)
- *   切换场景 = 改写 ~/.pi/agent/settings.json 的 packages/skills 数组 → ctx.reload() 热重载
+ *   切换场景 = 改写 settings 的 packages/skills 数组 → ctx.reload() 热重载
+ *
+ * 双层模型（v0.7）：资产层（user 全局）与激活层（project 项目）分离
+ *   旧版（≤0.6）把场景条目全部写进 ~/.pi/agent/settings.json —— 换目录启动 pi
+ *   场景也跟着带过去。v0.7 起 /scene <name> 默认作用于当前项目（<cwd>/.pi），
+ *   --global 才写全局。分层规则：
+ *   · npm/local 条目（工具型扩展，不占系统提示）→ 全局层：装一次全局可用
+ *   · git 多技能包（object form，全量暴露会污染系统提示）→ 双写：
+ *     全局锚点 {source, autoload:false, skills:[]}（零暴露 + 共享全局克隆）
+ *     项目 delta {source, autoload:false, skills:[场景子集]}（pi 原生 delta 机制：
+ *     project 条目 autoload:false 时基于 user 级安装做增量启用，见 pi packages.md
+ *     "project entry acts as a filtering delta over the personal package"）
+ *   · 场景 scaffold 技能目录 → 项目层：<cwd>/.pi/scenes/<名>/skills
+ *   · common 通用层 skills → 全局层（任何项目恒加载）
+ *   两层互斥单激活：切换时先摘净两层旧 managed 再写新层；资产锚点不摘
+ *   （零暴露无害，保留可让下次切换零下载秒切）。
  *
  * 分层模型（前向兼容「主场景→子场景」层级）：
  *   common  —— 通用层：任何场景下都恒加载的 packages + skills
@@ -20,9 +35,11 @@
  *
  * 命令：
  *   /scene              弹出选择器（当前场景高亮 ●）
- *   /scene <name>       切换到指定场景（参数 Tab 补全：/scene c<Tab> → /scene coding）
- *   /scene off|none     仅保留通用层（关闭场景）
- *   /scene status       显示当前激活与生效资源
+ *   /scene <name>       切换到指定场景（默认项目级；参数 Tab 补全：/scene c<Tab> → /scene coding）
+ *   /scene <name> --global  切换为全局场景（所有项目生效，≤0.6 语义）
+ *   /scene off|none     关闭场景（摘两层，仅保留通用层；资产锚点保留）
+ *   /scene status       显示当前激活与生效资源（项目/全局两级）
+ *   /scene migrate      把 ≤0.6 遗留的全局场景转为当前项目场景
  *   /scene init         生成模板 scenes.json 与场景 skill 目录骨架
  *   /scene stats        用量仪表盘（会话数/工具调用/反思评分/未纳管观察）
  *   /scene evolve       生成进化提案并逐条确认应用（备份 + 热重载）
@@ -40,13 +57,17 @@
  *
  * 文件：
  *   ~/.pi/agent/scenes.json        场景定义（用户编辑；含 evolve 阈值配置）
- *   ~/.pi/agent/scenes-state.json  激活状态 + managed 追踪（本扩展维护）
+ *   ~/.pi/agent/scenes-state.json  全局层激活状态 + managed 追踪（本扩展维护）
  *   ~/.pi/agent/scenes-usage.json  用量记账与自进化数据（本扩展维护）
- *   ~/.pi/agent/settings.json      pi 全局设置（仅动 packages/skills 两个数组）
- *   ~/.pi/agent/scenes/<名>/skills 各场景专属 skill 目录（约定，可自由改路径）
+ *   ~/.pi/agent/settings.json      pi 全局设置（资产层：npm 扩展 + 锚点 + common skills）
+ *   ~/.pi/agent/scenes/<名>/skills 全局场景 skill 目录（--global 模式与 vendor 源）
+ *   <cwd>/.pi/settings.json        项目设置（激活层：delta 条目 + 场景 skills 相对路径）
+ *   <cwd>/.pi/scenes-state.json    项目层激活状态 + managed 追踪（本扩展维护）
+ *   <cwd>/.pi/scenes/<名>/skills   项目场景 skill 目录（vendor 复制目标）
  *
  * 环境变量：
- *   PI_SCENES_DIR  覆盖基目录（默认 ~/.pi/agent，测试用）
+ *   PI_SCENES_DIR          覆盖全局基目录（默认 ~/.pi/agent，测试用）
+ *   PI_SCENES_PROJECT_DIR  覆盖项目基目录（默认 <cwd>/.pi，测试用）
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -114,6 +135,13 @@ export interface SceneState {
 	active: string | null;
 	/** 本扩展注入 settings 的条目（切走时精确摘除） */
 	managed: { packages: PackageEntry[]; skills: string[] };
+	/** v0.7 资产锚点（git 包 {source, autoload:false, skills:[]}）：零暴露 + 共享全局
+	 *  克隆；off/切换不摘，让下次切换零下载秒切。仅全局层 state 使用。 */
+	anchors?: PackageEntry[];
+	/** state 结构版本：2 = v0.7+ 双层模型；缺省 = ≤0.6 遗留（全局场景模式） */
+	version?: number;
+	/** ≤0.6 遗留全局场景的迁移提示是否已弹过（仅全局层 state 使用） */
+	migrateNotified?: boolean;
 }
 
 export interface ApplyResult {
@@ -388,12 +416,18 @@ export interface CorePaths {
 	stateFile: string;
 	usageFile: string;
 	settingsFile: string;
-	scenesRoot: string; // ~/.pi/agent/scenes（场景 skill 目录约定根）
+	scenesRoot: string; // ~/.pi/agent/scenes（全局场景 skill 目录约定根）
 	npmDir: string; // ~/.pi/agent/npm
 	gitRoot: string; // ~/.pi/agent/git
+	// v0.7 项目层（激活层）
+	projectDir: string; // <cwd>/.pi
+	projectSettingsFile: string; // <cwd>/.pi/settings.json
+	projectStateFile: string; // <cwd>/.pi/scenes-state.json
+	projectScenesRoot: string; // <cwd>/.pi/scenes
 }
 
-export function makeCore(baseDir: string) {
+export function makeCore(baseDir: string, projectDir?: string) {
+	const projDir = projectDir || process.env.PI_SCENES_PROJECT_DIR || path.join(process.cwd(), ".pi");
 	const paths: CorePaths = {
 		baseDir,
 		scenesFile: path.join(baseDir, "scenes.json"),
@@ -403,6 +437,10 @@ export function makeCore(baseDir: string) {
 		scenesRoot: path.join(baseDir, "scenes"),
 		npmDir: path.join(baseDir, "npm"),
 		gitRoot: path.join(baseDir, "git"),
+		projectDir: projDir,
+		projectSettingsFile: path.join(projDir, "settings.json"),
+		projectStateFile: path.join(projDir, "scenes-state.json"),
+		projectScenesRoot: path.join(projDir, "scenes"),
 	};
 
 	function loadScenes(): ScenesFile {
@@ -413,19 +451,46 @@ export function makeCore(baseDir: string) {
 		writeJson(paths.scenesFile, cfg);
 	}
 
-	function loadState(): SceneState {
-		const s = readJson<Partial<SceneState>>(paths.stateFile, {});
+	function loadStateFrom(file: string): SceneState {
+		const s = readJson<Partial<SceneState>>(file, {});
 		return {
 			active: s.active ?? null,
 			managed: {
 				packages: Array.isArray(s.managed?.packages) ? s.managed!.packages : [],
 				skills: Array.isArray(s.managed?.skills) ? s.managed!.skills : [],
 			},
+			anchors: Array.isArray(s.anchors) ? s.anchors : [],
+			version: s.version,
+			migrateNotified: s.migrateNotified,
 		};
 	}
 
-	function saveState(st: SceneState): void {
+	/** 全局层状态（v0.6 及之前唯一的状态文件；loadState 为其兼容别名） */
+	function loadUserState(): SceneState {
+		return loadStateFrom(paths.stateFile);
+	}
+
+	function saveUserState(st: SceneState): void {
 		writeJson(paths.stateFile, st);
+	}
+
+	/** 项目层状态（v0.7 激活层） */
+	function loadProjectState(): SceneState {
+		return loadStateFrom(paths.projectStateFile);
+	}
+
+	function saveProjectState(st: SceneState): void {
+		writeJson(paths.projectStateFile, st);
+	}
+
+	/** 生效激活：项目层优先，其次全局层（两层互斥单激活，但演进/边界下取项目优先） */
+	function effectiveActive(): string | null {
+		return loadProjectState().active ?? loadUserState().active;
+	}
+
+	/** 生效激活的落层 */
+	function effectiveScope(): "project" | "user" {
+		return loadProjectState().active ? "project" : "user";
 	}
 
 	function loadUsage(): UsageFile {
@@ -467,14 +532,16 @@ export function makeCore(baseDir: string) {
 		return out;
 	}
 
-	/** 生效集合 = 通用层 ∪ 场景链（skills 展开 ~，去重） */
-	function computeTarget(active: string | null, cfg: ScenesFile): { packages: PackageEntry[]; skills: string[] } {
+	/** 生效集合 = 通用层 ∪ 场景链（skills 展开 ~，去重；拆分 common/scene 归属供双层落点） */
+	function computeTarget(active: string | null, cfg: ScenesFile): { packages: PackageEntry[]; skills: string[]; commonSkills: string[]; sceneSkills: string[] } {
 		const common = cfg.common ?? {};
 		let scene: SceneDef = {};
 		if (active) scene = resolveScene(active, cfg);
 		const packages = dedupeByIdentity(dedupeEntries([...(common.packages ?? []), ...(scene.packages ?? [])]));
-		const skills = [...new Set([...(common.skills ?? []), ...(scene.skills ?? [])].map(expandHome))];
-		return { packages, skills };
+		const commonSkills = [...new Set([...(common.skills ?? [])].map(expandHome))];
+		const sceneSkills = [...new Set([...(scene.skills ?? [])].map(expandHome))];
+		const skills = [...new Set([...commonSkills, ...sceneSkills])];
+		return { packages, skills, commonSkills, sceneSkills };
 	}
 
 	/** 包是否已安装（探测 npm 目录 / git clone 目录 / 本地路径） */
@@ -494,105 +561,231 @@ export function makeCore(baseDir: string) {
 		return false;
 	}
 
+	/** object form 带资源过滤字段（git 多技能包）判定：项目层 delta 候选 */
+	function isFilteredEntry(e: PackageEntry): boolean {
+		if (typeof e !== "object" || e === null) return false;
+		return ["skills", "extensions", "prompts", "themes"].some((k) => Array.isArray((e as Record<string, unknown>)[k]));
+	}
+
+	/** 场景 skill 路径 → 项目层映射：全局 scenesRoot 下的路径转项目相对（相对 <cwd>/.pi 解析），
+	 *  其余（用户自定义绝对/~ 路径）原样写入项目 settings */
+	function mapSceneSkillToProject(p: string): { entry: string; dir?: string; globalDir?: string } {
+		const scenesRootAbs = expandHome(paths.scenesRoot);
+		const abs = expandHome(p);
+		if (abs === scenesRootAbs || abs.startsWith(scenesRootAbs + path.sep)) {
+			const rel = path.relative(scenesRootAbs, abs); // e.g. "coding/skills"
+			return {
+				entry: path.posix.join("scenes", rel.split(path.sep).join("/")),
+				dir: path.join(paths.projectScenesRoot, rel),
+				globalDir: abs,
+			};
+		}
+		return { entry: p };
+	}
+
+	/** 幂等复制目录内容（仅复制目标缺失项，不覆盖用户已有）：返回复制文件数 */
+	function copyTreeIfMissing(src: string, dst: string): number {
+		let st: fs.Stats;
+		try {
+			st = fs.statSync(src);
+		} catch {
+			return 0;
+		}
+		if (!st.isDirectory()) return 0;
+		fs.mkdirSync(dst, { recursive: true });
+		let n = 0;
+		for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+			const s = path.join(src, e.name);
+			const d = path.join(dst, e.name);
+			if (fs.existsSync(d)) continue;
+			if (e.isDirectory()) n += copyTreeIfMissing(s, d);
+			else {
+				fs.copyFileSync(s, d);
+				n++;
+			}
+		}
+		return n;
+	}
+
 	/**
-	 * 把目标集合落进 settings.json：
-	 * 1. 摘掉 state.managed 里的旧条目（精确匹配）
-	 * 2. 追加目标中原本不存在的条目，记入新 managed
+	 * 把目标集合落进 settings（v0.7 双层）：
+	 * 1. 摘掉两层 state.managed 里的旧条目（精确匹配；两层互斥单激活）
+	 * 2. 按层落点追加（项目层 filtered 条目加 autoload:false 转 delta；全局层
+	 *    补资产锚点；场景 scaffold skills 映射为项目相对路径 + 幂等复制 vendor 资产）
 	 * 3. preInstallPackages = 安装缺失包动作之前的快照；
 	 *    pi install 会自己往 settings 写条目，diff 出来的（在目标集合内的）也归 managed
-	 * 返回统计。settings.json 先备份再原子写。
+	 * 返回统计。两份 settings.json 先备份再原子写。
+	 *
+	 * scope："project"（默认项目级，v0.7 产品语义）| "user"（--global，≤0.6 兼容语义）。
+	 * 为向后兼容旧调用（三参），签名默认值取 "user"；命令层显式传 scope。
 	 */
 	function applyToSettings(
-		target: { packages: PackageEntry[]; skills: string[] },
+		target: { packages: PackageEntry[]; skills: string[]; commonSkills?: string[]; sceneSkills?: string[] },
 		active: string | null,
 		preInstallPackages: PackageEntry[] | undefined,
+		scope: "user" | "project" = "user",
 	): ApplyResult {
-		const settings = readJson<Record<string, unknown>>(paths.settingsFile, {});
-		const oldPkgs = Array.isArray(settings.packages) ? (settings.packages as PackageEntry[]) : [];
-		const oldSkills = Array.isArray(settings.skills) ? (settings.skills as string[]) : [];
-		const prevManaged = loadState().managed;
+		const useProject = scope === "project";
+		const sceneSkills = target.sceneSkills ?? [];
+		const userSettings = readJson<Record<string, unknown>>(paths.settingsFile, {});
+		const projSettings = readJson<Record<string, unknown>>(paths.projectSettingsFile, {});
+		const oldUserPkgs = Array.isArray(userSettings.packages) ? (userSettings.packages as PackageEntry[]) : [];
+		const oldUserSkills = Array.isArray(userSettings.skills) ? (userSettings.skills as string[]) : [];
+		const oldProjPkgs = Array.isArray(projSettings.packages) ? (projSettings.packages as PackageEntry[]) : [];
+		const oldProjSkills = Array.isArray(projSettings.skills) ? (projSettings.skills as string[]) : [];
+		const prevUser = loadUserState();
+		const prevProj = loadProjectState();
 
-		// 1) 摘旧
-		let pkgs = removeFrom(oldPkgs, prevManaged.packages);
-		let skills = removeFrom(oldSkills, prevManaged.skills);
+		// 1) 摘旧：两层 managed 都摘（互斥单激活；资产锚点 anchors 不摘）
+		let userPkgs = removeFrom(oldUserPkgs, prevUser.managed.packages);
+		let userSkills = removeFrom(oldUserSkills, prevUser.managed.skills);
+		let projPkgs = removeFrom(oldProjPkgs, prevProj.managed.packages);
+		let projSkills = removeFrom(oldProjSkills, prevProj.managed.skills);
+		let anchors = prevUser.anchors ?? [];
+		// 全局模式：目标 filtered 条目替换同包锚点（sameEntry 精确匹配锚点写法，
+		// 不碰用户手配的同包裸 spec —— 后者走 borrowed 语义保留）
+		if (!useProject) {
+			for (const a of [...anchors]) {
+				if (!target.packages.some((t) => isFilteredEntry(t) && sameResource(t, a))) continue;
+				userPkgs = userPkgs.filter((x) => !sameEntry(x, a));
+				anchors = anchors.filter((x) => x !== a);
+			}
+		}
 
-		// 2) 补新（用户已手配的视为 borrowed，不纳管）
 		const result: ApplyResult = {
 			addedPackages: [],
 			addedSkills: [],
-			removedPackages: oldPkgs.filter((p) => !pkgs.some((x) => sameEntry(x, p))),
-			removedSkills: oldSkills.filter((s) => !skills.includes(s)),
+			removedPackages: [...oldUserPkgs.filter((p) => !userPkgs.some((x) => sameEntry(x, p))), ...oldProjPkgs.filter((p) => !projPkgs.some((x) => sameEntry(x, p)))],
+			removedSkills: [...oldUserSkills.filter((s) => !userSkills.includes(s)), ...oldProjSkills.filter((s) => !projSkills.includes(s))],
 			borrowedPackages: [],
 			borrowedSkills: [],
 		};
-		const newManagedPkgs: PackageEntry[] = [];
-		for (const e of target.packages) {
-			if (pkgs.some((x) => sameEntry(x, e))) {
-				// 已存在：若来自 pi install 在本次切换中的写入（preInstall 快照里没有）→ 纳管
-				const inPre = (preInstallPackages ?? oldPkgs).some((x) => sameEntry(x, e));
-				if (!inPre) newManagedPkgs.push(e);
+
+		// 2) 补新：包条目按层落点
+		const newUserManagedPkgs: PackageEntry[] = [];
+		const newProjManagedPkgs: PackageEntry[] = [];
+		for (const raw of target.packages) {
+			// 项目模式下 filtered 条目 → delta 形态（autoload:false 复用全局克隆 + 白名单启用）
+			const e: PackageEntry = useProject && isFilteredEntry(raw) ? { ...(raw as Record<string, unknown>), autoload: false } : raw;
+			const landed = useProject && isFilteredEntry(raw);
+			let pkgsRef = landed ? projPkgs : userPkgs;
+			const sink = landed ? newProjManagedPkgs : newUserManagedPkgs;
+			const preList = preInstallPackages ?? (landed ? oldProjPkgs : oldUserPkgs);
+			if (pkgsRef.some((x) => sameEntry(x, e))) {
+				// 已存在：若来自 pi install 在本次切换中的写入（pre 快照里没有）→ 纳管
+				const inPre = preList.some((x) => sameEntry(x, e));
+				if (!inPre) sink.push(e);
 				else result.borrowedPackages.push(e);
-			} else if (typeof e === "object" && e !== null && pkgs.some((x) => sameResource(x, e))) {
+			} else if (typeof e === "object" && e !== null && pkgsRef.some((x) => sameResource(x, e))) {
 				// 目标是对象形态（带 skills/extensions 等资源过滤），现存的同包条目是裸 spec：
-				// - 裸 spec 是 pi install 在本次切换中刚写入的（不在 preInstall 快照里）→ 替换为对象形态，
+				// - 裸 spec 是 pi install 在本次切换中刚写入的（不在 pre 快照里）→ 替换为对象形态，
 				//   否则 anthropics/skills 这类多技能包会全量加载，场景级裁剪失效；
 				// - 裸 spec 是用户先前手配的（在快照里）→ 尊重用户全局选择，视为借用。
-				const preExisting = (preInstallPackages ?? oldPkgs).some((x) => sameResource(x, e));
+				const preExisting = preList.some((x) => sameResource(x, e));
 				if (!preExisting) {
-					pkgs = pkgs.filter((x) => !sameResource(x, e));
-					pkgs.push(e);
-					newManagedPkgs.push(e);
+					if (landed) {
+						projPkgs = projPkgs.filter((x) => !sameResource(x, e));
+						pkgsRef = projPkgs;
+					} else {
+						userPkgs = userPkgs.filter((x) => !sameResource(x, e));
+						pkgsRef = userPkgs;
+					}
+					pkgsRef.push(e);
+					sink.push(e);
 					result.addedPackages.push(e);
 				} else {
 					result.borrowedPackages.push(e);
 				}
-			} else if (pkgs.some((x) => sameResource(x, e))) {
+			} else if (pkgsRef.some((x) => sameResource(x, e))) {
 				// 同包不同写法（如用户手动 pin 了版本）：视为借用，避免重复注入与重复加载
 				result.borrowedPackages.push(e);
 			} else {
-				pkgs.push(e);
-				newManagedPkgs.push(e);
+				pkgsRef.push(e);
+				sink.push(e);
 				result.addedPackages.push(e);
 			}
-		}
-		const newManagedSkills: string[] = [];
-		for (const s of target.skills) {
-			if (skills.includes(s)) {
-				result.borrowedSkills.push(s);
-			} else {
-				skills.push(s);
-				newManagedSkills.push(s);
-				result.addedSkills.push(s);
+			// 项目层 delta 落地 → 全局层确保资产锚点（零暴露 + 共享全局克隆的 delta base）
+			if (landed) {
+				const anchor: PackageEntry = { source: specOf(raw), autoload: false, skills: [] };
+				const anchored = userPkgs.some((x) => sameResource(x, raw)) || anchors.some((a) => sameResource(a, anchor));
+				if (!anchored) {
+					userPkgs.push(anchor);
+					anchors.push(anchor);
+				}
 			}
 		}
 
-		// 3) 落盘：备份 → 原子写
-		if (fs.existsSync(paths.settingsFile)) {
-			fs.copyFileSync(paths.settingsFile, `${paths.settingsFile}.scenes-bak`);
+		// skills 按层落点：场景 scaffold 目录（项目模式）映射为项目相对路径 + 幂等复制 vendor
+		const newUserManagedSkills: string[] = [];
+		const newProjManagedSkills: string[] = [];
+		for (const s of target.skills) {
+			const isSceneSkill = sceneSkills.includes(s);
+			if (useProject && isSceneSkill) {
+				const m = mapSceneSkillToProject(s);
+				if (projSkills.includes(m.entry)) {
+					result.borrowedSkills.push(m.entry);
+				} else {
+					projSkills.push(m.entry);
+					newProjManagedSkills.push(m.entry);
+					result.addedSkills.push(m.entry);
+				}
+				// vendor 资产：全局 scaffold 目录 → 项目目录（幂等，不覆盖用户已有）
+				if (m.dir && m.globalDir) copyTreeIfMissing(m.globalDir, m.dir);
+			} else {
+				if (userSkills.includes(s)) {
+					result.borrowedSkills.push(s);
+				} else {
+					userSkills.push(s);
+					newUserManagedSkills.push(s);
+					result.addedSkills.push(s);
+				}
+			}
 		}
-		settings.packages = pkgs;
-		settings.skills = skills;
-		writeJson(paths.settingsFile, settings);
 
-		saveState({ active, managed: { packages: newManagedPkgs, skills: newManagedSkills } });
+		// 3) 落盘：备份 → 原子写（两层）
+		for (const f of [paths.settingsFile, paths.projectSettingsFile]) {
+			if (fs.existsSync(f)) fs.copyFileSync(f, `${f}.scenes-bak`);
+		}
+		userSettings.packages = userPkgs;
+		userSettings.skills = userSkills;
+		writeJson(paths.settingsFile, userSettings);
+		projSettings.packages = projPkgs;
+		projSettings.skills = projSkills;
+		writeJson(paths.projectSettingsFile, projSettings);
+
+		saveUserState({
+			active: useProject ? null : active,
+			managed: { packages: newUserManagedPkgs, skills: newUserManagedSkills },
+			anchors,
+			version: 2,
+		});
+		saveProjectState({
+			active: useProject ? active : null,
+			managed: { packages: newProjManagedPkgs, skills: newProjManagedSkills },
+			version: 2,
+		});
 		return result;
 	}
 
+	// v0.6 兼容别名：loadState/saveState = 全局层（既有测试引用面不变）
+	const loadState = loadUserState;
+	const saveState = saveUserState;
+
 	/** 用量记账：新会话开始（session_file 变化才计数；reload 同文件不重复计） */
 	function beginSession(sessionFile: string | null, settingsPackages: PackageEntry[] | undefined): void {
-		const st = loadState();
+		const active = effectiveActive();
 		const usage = loadUsage();
 		const file = sessionFile ?? "ephemeral";
 		if (usage._current?.file === file) return;
 		const now = new Date().toISOString();
-		if (st.active) {
-			const s = (usage.perScene[st.active] ??= { sessions: 0, lastActive: now });
+		if (active) {
+			const s = (usage.perScene[active] ??= { sessions: 0, lastActive: now });
 			s.sessions += 1;
 			s.lastActive = now;
 		}
 		// 未纳管观察：在 settings 但不在 target 且不在任何场景定义 → 吸收候选
 		const cfg = loadScenes();
-		const target = computeTarget(st.active, cfg);
+		const target = computeTarget(active, cfg);
 		const definedAnywhere: PackageEntry[] = [
 			...(cfg.common?.packages ?? []),
 			...Object.values(cfg.scenes ?? {}).flatMap((d) => d.packages ?? []),
@@ -604,9 +797,9 @@ export function makeCore(baseDir: string) {
 			const u = (usage.unmanagedSeen[key] ??= { count: 0, lastSeen: now, scenes: [] });
 			u.count += 1;
 			u.lastSeen = now;
-			if (st.active && !u.scenes.includes(st.active)) u.scenes.push(st.active);
+			if (active && !u.scenes.includes(active)) u.scenes.push(active);
 		}
-		usage._current = { file, scene: st.active, seen: [] };
+		usage._current = { file, scene: active, seen: [] };
 		saveUsage(usage);
 	}
 
@@ -614,9 +807,8 @@ export function makeCore(baseDir: string) {
 	function recordToolUse(toolName: string, toolMap: Map<string, string>): boolean {
 		const pkg = toolMap.get(toolName);
 		if (!pkg) return false;
-		const st = loadState();
 		const cfg = loadScenes();
-		const target = computeTarget(st.active, cfg);
+		const target = computeTarget(effectiveActive(), cfg);
 		const entry = target.packages.find((e) => packageIdentity(e).includes(pkg));
 		if (!entry) return false;
 		const key = canonical(entry);
@@ -631,9 +823,8 @@ export function makeCore(baseDir: string) {
 
 	/** 反思记账：skill 子项有用/无用计数，用到则父目录条目标记 seen（重置 streak） */
 	function recordReflection(used: string[], unused: string[]): void {
-		const st = loadState();
 		const cfg = loadScenes();
-		const target = computeTarget(st.active, cfg);
+		const target = computeTarget(effectiveActive(), cfg);
 		const usage = loadUsage();
 		const now = new Date().toISOString();
 		const markParent = (id: string) => {
@@ -658,9 +849,8 @@ export function makeCore(baseDir: string) {
 	/** 会话结束：结算 absentStreak（reload 不结算，会话仍在继续） */
 	function endSession(reason: string): void {
 		if (reason === "reload") return;
-		const st = loadState();
 		const cfg = loadScenes();
-		const target = computeTarget(st.active, cfg);
+		const target = computeTarget(effectiveActive(), cfg);
 		const usage = loadUsage();
 		const seen = usage._current?.seen ?? [];
 		const keys = [...target.packages.map((e) => canonical(e)), ...target.skills];
@@ -914,6 +1104,12 @@ export function makeCore(baseDir: string) {
 		saveScenes,
 		loadState,
 		saveState,
+		loadUserState,
+		saveUserState,
+		loadProjectState,
+		saveProjectState,
+		effectiveActive,
+		effectiveScope,
 		loadUsage,
 		saveUsage,
 		resolveScene,
@@ -942,21 +1138,20 @@ export default function (pi: ExtensionAPI) {
 	const core = makeCore(baseDir);
 
 	/**
-	 * 状态栏常驻场景徽标（<icon> <场景名>）：切换后用户始终知道自己在哪个场景。
-	 * 前缀可由 scenes.json 每场景 icon 字段定制（建议 emoji），缺省 ◆。
-	 * 设计动机：场景切换器在界面上只弹一次 notify 就消失了，用户无从得知当前场景；
-	 * 而场景附带的工具型扩展（如 pi-lens）的状态栏内脏反而在抢占视觉 ——
-	 * 状态栏应该回答“我在哪”，而不是“工具的内部状态”。
-	 * off（仅通用层）时清除；session_start 时幂等重放（重启 pi 后恢复）。
+	 * 状态栏常驻场景徽标：项目场景 ◆ <名>（默认层级）；全局场景 ◇ <名> ⌘（--global）。
+	 * 切换后用户始终知道自己在哪个场景、哪一层。off 时清除；
+	 * session_start 时幂等重放（重启 pi 后恢复）。
 	 */
 	function updateSceneBadge(ctx: any): void {
 		try {
 			const ui = ctx?.ui;
 			if (!ui || typeof ui.setStatus !== "function") return;
-			const active = core.loadState().active;
+			const proj = core.loadProjectState().active;
+			const user = core.loadUserState().active;
+			const active = proj ?? user;
 			if (active) {
-				const icon = core.loadScenes().scenes?.[active]?.icon?.trim() || "◆";
-				const text = `${icon} ${active}`;
+				const icon = core.loadScenes().scenes?.[active]?.icon?.trim() || (proj ? "◆" : "◇");
+				const text = `${icon} ${active}${proj ? "" : " ⌘"}`;
 				ui.setStatus("pi-scene", ui.theme?.fg ? ui.theme.fg("accent", text) : text);
 			} else {
 				ui.setStatus("pi-scene", undefined);
@@ -964,14 +1159,27 @@ export default function (pi: ExtensionAPI) {
 		} catch {}
 	}
 
-	/** 执行切换（name=null 表示仅通用层） */
-	async function doSwitch(ctx: any, name: string | null): Promise<void> {
+	/** 读两层 settings 的 packages（供缺失判定与冲突检测） */
+	function readAllSettingsPackages(): { user: PackageEntry[]; project: PackageEntry[] } {
+		const u = readJson<Record<string, unknown>>(core.paths.settingsFile, {});
+		const p = readJson<Record<string, unknown>>(core.paths.projectSettingsFile, {});
+		return {
+			user: Array.isArray(u.packages) ? (u.packages as PackageEntry[]) : [],
+			project: Array.isArray(p.packages) ? (p.packages as PackageEntry[]) : [],
+		};
+	}
+
+	/** 执行切换（name=null 表示仅通用层；scope=project 项目级默认 / user 全局） */
+	async function doSwitch(ctx: any, name: string | null, scope: "user" | "project"): Promise<void> {
 		const cfg = core.loadScenes();
 		if (name && !cfg.scenes?.[name]) {
 			ctx.ui.notify(`场景不存在：${name}（可用：${Object.keys(cfg.scenes ?? {}).join(", ") || "无"}）`, "error");
 			return;
 		}
-		const label = name ? `「${name}」${cfg.scenes?.[name]?.description ? ` — ${cfg.scenes[name].description}` : ""}` : "仅通用层";
+		const scopeLabel = scope === "project" ? "（项目级，仅当前目录生效）" : "（全局，所有项目生效）";
+		const label = name
+			? `「${name}」${cfg.scenes?.[name]?.description ? ` — ${cfg.scenes[name].description}` : ""}${scopeLabel}`
+			: `仅通用层${scopeLabel}`;
 
 		const target = core.computeTarget(name, cfg);
 
@@ -986,15 +1194,19 @@ export default function (pi: ExtensionAPI) {
 			);
 		}
 
-		const prePkgs = (readJson<Record<string, unknown>>(core.paths.settingsFile, {}).packages ?? []) as PackageEntry[];
+		const pre = readAllSettingsPackages();
+		const prePkgs = [...pre.project, ...pre.user];
 
-		// settings 已有同包异写法并存（无论是否本扩展造成）：pi 启动会加载同一扩展两份、
-		// 工具重名冲突退出 —— 先拦截并给出修复指引，避免加重坏状态
-		const dups = core.findSettingsDuplicates(prePkgs);
+		// settings 层内同包异写法并存（跨层同包是 v0.7 设计内：delta + 锚点）：
+		// pi 启动会加载同一扩展两份、工具重名冲突退出 —— 先拦截并给出修复指引
+		const dups = [
+			...core.findSettingsDuplicates(pre.user).map((d) => ({ ...d, where: "全局" })),
+			...core.findSettingsDuplicates(pre.project).map((d) => ({ ...d, where: "项目" })),
+		];
 		if (dups.length > 0) {
 			ctx.ui.notify(
-				`⚠️ settings.json 里同一包存在多种写法并存，pi 启动时会因工具重名冲突而退出，请先手动删除其中一种：\n${dups
-					.map((d) => `  · ${d.id}: ${d.entries.join(" | ")}`)
+				`⚠️ settings 里同一包存在多种写法并存，pi 启动时会因工具重名冲突而退出，请先手动删除其中一种：\n${dups
+					.map((d) => `  · [${d.where}] ${d.id}: ${d.entries.join(" | ")}`)
 					.join("\n")}\n修复后再切换场景`,
 				"error",
 			);
@@ -1009,7 +1221,7 @@ export default function (pi: ExtensionAPI) {
 		if (missing.length > 0) {
 			const ok = await ctx.ui.confirm(
 				"场景包未安装",
-				`以下 ${missing.length} 个包尚未安装，现在安装吗？\n${missing.map((m) => `  · ${specOf(m)}`).join("\n")}`,
+				`以下 ${missing.length} 个包尚未安装，现在安装吗？（统一装到全局 ~/.pi/agent，所有项目共享缓存）\n${missing.map((m) => `  · ${specOf(m)}`).join("\n")}`,
 			);
 			if (!ok) {
 				ctx.ui.notify("已取消切换（未做任何修改）", "info");
@@ -1023,15 +1235,15 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 			}
-			const postPkgs = (readJson<Record<string, unknown>>(core.paths.settingsFile, {}).packages ?? []) as PackageEntry[];
-			const still = core.findMissingPackages(target.packages, postPkgs);
+			const post = readAllSettingsPackages();
+			const still = core.findMissingPackages(target.packages, [...post.project, ...post.user]);
 			if (still.length > 0) {
 				ctx.ui.notify(`仍有包未安装：${still.map(specOf).join(", ")}，已中止切换`, "error");
 				return;
 			}
 		}
 
-		const r = core.applyToSettings(target, name, preInstallPackages);
+		const r = core.applyToSettings(target, name, preInstallPackages, scope);
 		updateSceneBadge(ctx);
 		ctx.ui.notify(
 			`已切换到 ${label}\n  +${r.addedPackages.length} 包 +${r.addedSkills.length} skill · -${r.removedPackages.length} 包 -${r.removedSkills.length} skill\n  正在热重载…`,
@@ -1054,7 +1266,7 @@ export default function (pi: ExtensionAPI) {
 		let active: string | null = null;
 		try {
 			cfg = core.loadScenes();
-			active = core.loadState().active;
+			active = core.effectiveActive();
 		} catch {}
 		const items: Array<{ value: string; label: string; description?: string }> = [];
 		for (const [name, def] of Object.entries(cfg.scenes ?? {})) {
@@ -1063,8 +1275,9 @@ export default function (pi: ExtensionAPI) {
 			items.push({ value: name, label: `${icon} ${name}`, description: desc });
 		}
 		const subs: Array<[string, string]> = [
-			["off", "仅保留通用层（关闭场景）"],
-			["status", "查看当前场景与生效资源"],
+			["off", "关闭场景（摘两层，仅保留通用层；资产锚点保留）"],
+			["status", "查看当前场景与生效资源（项目/全局两级）"],
+			["migrate", "把 ≤0.6 遗留的全局场景转为当前项目场景"],
 			["init", "生成模板 scenes.json 与 skill 骨架"],
 			["stats", "用量仪表盘（会话/工具调用/反思）"],
 			["evolve", "生成并应用进化提案"],
@@ -1084,12 +1297,19 @@ export default function (pi: ExtensionAPI) {
 		return `切换场景（空格后 Tab 列出并补全）：${names.join("/") || "<name>"}`;
 	}
 
+	/** 解析 --global/-g 标志：返回 [是否全局, 去掉标志后的参数] */
+	function parseScopeFlag(arg: string): [boolean, string] {
+		const global = /(?:^|\s)--global(?:\s|$)|(?:^|\s)-g(?:\s|$)/.test(arg);
+		return [global, arg.replace(/\s*(?:--global|-g)\s*/g, " ").trim()];
+	}
+
 	const sceneCommand = {
 		title: "场景切换",
 		description: sceneCommandDescription(),
 		getArgumentCompletions: sceneCompletions,
 		handler: async (args: string, ctx: any) => {
-			const arg = (args ?? "").trim();
+			const [wantGlobal, arg] = parseScopeFlag((args ?? "").trim());
+			const scope: "user" | "project" = wantGlobal ? "user" : "project";
 
 			if (arg === "init") {
 				const created = core.scaffold();
@@ -1116,15 +1336,22 @@ export default function (pi: ExtensionAPI) {
 
 			if (arg === "status") {
 				const cfg = core.loadScenes();
-				const st = core.loadState();
-				const target = core.computeTarget(st.active, cfg);
+			const proj = core.loadProjectState();
+			const user = core.loadUserState();
+			const active = core.effectiveActive();
+				const target = core.computeTarget(active, cfg);
 				const collisions = core.findSpecCollisions(cfg);
 				const lines = [
-					`当前场景：${st.active ? `${cfg.scenes?.[st.active]?.icon?.trim() || "◆"} ${st.active}` : "（无，仅通用层）"}`,
+					`项目场景（${core.paths.projectDir}）：${proj.active ? `${cfg.scenes?.[proj.active]?.icon?.trim() || "◆"} ${proj.active}` : "（无）"}`,
+					`全局场景（--global）：${user.active ? `${cfg.scenes?.[user.active]?.icon?.trim() || "◇"} ${user.active}` : "（无）"}`,
+					`生效场景：${active ? `${cfg.scenes?.[active]?.icon?.trim() || "◆"} ${active}` : "（无，仅通用层）"}`,
 					`生效 packages（${target.packages.length}）：${target.packages.map(specOf).join(", ") || "—"}`,
 					`生效 skills（${target.skills.length}）：${target.skills.join(", ") || "—"}`,
 					`可用场景：${Object.keys(cfg.scenes ?? {}).join(", ") || "—"}`,
 				];
+				if ((user.anchors?.length ?? 0) > 0) {
+					lines.push(`资产锚点（零暴露，全局缓存共享）：${user.anchors!.map(specOf).join(", ")}`);
+				}
 				if (collisions.length > 0) {
 					lines.push(`⚠️ 同包多种写法（已按首个生效）：${collisions.map((c) => `${c.id}(${c.entries.map((e) => e.spec).join("|")})`).join("、")}`);
 				}
@@ -1156,18 +1383,36 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (arg === "off" || arg === "none") {
-				await doSwitch(ctx, null);
+				// off 无论何种 scope 都摘两层（用户意图 = 全部关掉）；资产锚点保留
+				await doSwitch(ctx, null, scope);
+				return;
+			}
+
+			if (arg === "migrate") {
+				const user = core.loadUserState();
+				if (!user.active) {
+					ctx.ui.notify("没有 ≤0.6 遗留的全局场景，无需迁移", "info");
+				return;
+				}
+				const ok = await ctx.ui.confirm(
+					"迁移全局场景为项目场景",
+					`检测到全局场景「${user.active}」（≤0.6 模式，所有目录生效）。\n转为当前目录的项目场景？\n· 资产（包与克隆）不动，仍在全局共享\n· 激活条目移到 ${core.paths.projectSettingsFile}`,
+				);
+				if (!ok) return;
+				await doSwitch(ctx, user.active, "project");
 				return;
 			}
 
 			if (arg) {
-				await doSwitch(ctx, arg);
+				await doSwitch(ctx, arg, scope);
 				return;
 			}
 
-			// 无参数：选择器
+			// 无参数：选择器（默认项目级；● 当前项目场景 / ◐ 当前全局场景 / ○ 未激活）
 			const cfg = core.loadScenes();
-			const st = core.loadState();
+			const projActive = core.loadProjectState().active;
+			const userActive = core.loadUserState().active;
+			const active = projActive ?? userActive;
 			const names = Object.keys(cfg.scenes ?? {});
 			if (names.length === 0) {
 				ctx.ui.notify(`scenes.json 里还没有定义场景，编辑 ${core.paths.scenesFile}`, "info");
@@ -1178,30 +1423,31 @@ export default function (pi: ExtensionAPI) {
 			const items: string[] = names.map((n) => {
 				const d = cfg.scenes![n]?.description ?? "";
 				const icon = cfg.scenes![n]?.icon?.trim() || "◆";
-				const cur = st.active === n ? "●" : "○";
-				const label = `${cur} ${icon} ${n}${d ? ` · ${d}` : ""}${st.active === n ? "  [当前]" : ""}`;
+				const cur = projActive === n ? "●" : userActive === n ? "◐" : "○";
+				const layer = projActive === n ? " [项目]" : userActive === n ? " [全局]" : "";
+				const label = `${cur} ${icon} ${n}${d ? ` · ${d}` : ""}${layer}`;
 				labelToName.set(label, n);
 				return label;
 			});
-			const extra = [PICKER_OFF + (st.active === null ? "  [当前]" : ""), PICKER_CANCEL];
-			const choice = await ctx.ui.select(`切换场景（通用层恒生效）`, [...items, ...extra]);
+			const extra = [PICKER_OFF + (active === null ? "  [当前]" : ""), PICKER_CANCEL];
+			const choice = await ctx.ui.select(`切换场景（写入 ${core.paths.projectSettingsFile}）`, [...items, ...extra]);
 			if (!choice || choice === PICKER_CANCEL) return;
 			if (choice.startsWith(PICKER_OFF)) {
-				if (st.active === null) {
+				if (active === null) {
 					ctx.ui.notify("当前已是仅通用层", "info");
 					return;
 				}
-				await doSwitch(ctx, null);
+				await doSwitch(ctx, null, "project");
 				return;
 			}
 			// label → 场景名（含 icon/描述的完整条目作为 key，避免解析歧义）
 			const name = labelToName.get(choice);
 			if (!name) return;
-			if (st.active === name) {
-				ctx.ui.notify(`当前已在场景「${name}」`, "info");
+			if (active === name && projActive === name) {
+				ctx.ui.notify(`当前已在项目场景「${name}」`, "info");
 				return;
 			}
-			await doSwitch(ctx, name);
+			await doSwitch(ctx, name, "project");
 		},
 	};
 
@@ -1219,8 +1465,7 @@ export default function (pi: ExtensionAPI) {
 
 	function hasToolsForTarget(): Set<string> {
 		const cfg = core.loadScenes();
-		const st = core.loadState();
-		const target = core.computeTarget(st.active, cfg);
+		const target = core.computeTarget(core.effectiveActive(), cfg);
 		const owners = new Set(getToolMap().tools.values());
 		return new Set(target.packages.filter((e) => packageIdentity(e).some((id) => owners.has(id))).map((e) => canonical(e)));
 	}
@@ -1281,8 +1526,8 @@ export default function (pi: ExtensionAPI) {
 		const next = applyProposals(cfg, accepted);
 		backupScenes();
 		core.saveScenes(next);
-		const st = core.loadState();
-		core.applyToSettings(core.computeTarget(st.active, next), st.active, undefined);
+		const active = core.effectiveActive();
+		core.applyToSettings(core.computeTarget(active, next), active, undefined, core.effectiveScope());
 		ctx.ui.notify(`已应用 ${accepted.length} 条提案，正在热重载…`, "info");
 		await ctx.reload();
 	}
@@ -1310,9 +1555,8 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function runReflection(ctx: any): Promise<void> {
-		const st = core.loadState();
 		const cfg = core.loadScenes();
-		const target = core.computeTarget(st.active, cfg);
+		const target = core.computeTarget(core.effectiveActive(), cfg);
 		const skills = listSkillChildren(target.skills);
 		if (!skills.length) return;
 		const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
@@ -1344,8 +1588,8 @@ export default function (pi: ExtensionAPI) {
 		const next = applyProposals(cfg, proposals);
 		backupScenes();
 		core.saveScenes(next);
-		const st = core.loadState();
-		core.applyToSettings(core.computeTarget(st.active, next), st.active, undefined);
+		const active = core.effectiveActive();
+		core.applyToSettings(core.computeTarget(active, next), active, undefined, core.effectiveScope());
 		// 不在 shutdown 里 ctx.reload()（会递归触发 shutdown）；变更下次自然重载生效
 		if (reason !== "quit") {
 			try {
@@ -1357,12 +1601,28 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	/** ≤0.6 遗留全局场景的一次性迁移提示（不自动改配置，只提醒一次） */
+	function notifyLegacyMigration(ctx: any): void {
+		try {
+			const user = core.loadUserState();
+			// version 缺省 = 0.6.x 写入的全局场景；v0.7 起 --global 切换会写 version:2
+			if (user.active && user.version !== 2 && !user.migrateNotified) {
+				core.saveUserState({ ...user, migrateNotified: true });
+				ctx.ui?.notify(
+					`检测到全局场景「${user.active}」（pi-scenes ≤0.6 模式，所有目录生效）。\nv0.7 起场景默认项目级：/scene migrate 转为当前项目场景，或 /scene off 关闭。`,
+					"info",
+				);
+			}
+		} catch {}
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		try {
-			const pkgs = readJson<Record<string, unknown>>(core.paths.settingsFile, {}).packages;
-			core.beginSession(ctx.sessionManager?.getSessionFile?.() ?? null, Array.isArray(pkgs) ? (pkgs as PackageEntry[]) : []);
+			const all = readAllSettingsPackages();
+			core.beginSession(ctx.sessionManager?.getSessionFile?.() ?? null, [...all.project, ...all.user]);
 		} catch {}
 		updateSceneBadge(ctx);
+		notifyLegacyMigration(ctx);
 	});
 
 	pi.on("tool_call", async (event) => {

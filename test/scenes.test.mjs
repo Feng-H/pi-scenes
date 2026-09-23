@@ -11,7 +11,8 @@ import { makeCore, computeProposals, applyProposals } from "../extensions/scenes
 
 function tmpBase() {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-scenes-test-"));
-	return { dir, core: makeCore(dir) };
+	// v0.7：项目层也指向临时目录（否则默认 <cwd>/.pi 会污染仓库）
+	return { dir, core: makeCore(dir, path.join(dir, "proj")) };
 }
 
 function writeSettings(core, obj) {
@@ -440,4 +441,125 @@ test("v0.6.0 模板预设：coding 含 pi-simplify + 两个 git 技能包对象�
 	const officeSpecs = cfg.scenes.office.packages.map((p) => (typeof p === "string" ? p : p.source));
 	assert.ok(officeSpecs.includes("git:github.com/anthropics/skills"));
 	assert.ok(cfg.scenes.pm.packages.includes("npm:@juicesharp/rpiv-ask-user-question"));
+});
+
+// ── v0.7 双层模型：资产层（user）与激活层（project）分离 ──────────
+
+function tmpDual() {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-scenes-dual-"));
+	const projDir = path.join(dir, "proj-pi");
+	return { dir, projDir, core: makeCore(dir, projDir) };
+}
+
+const DUAL_CFG = {
+	common: {
+		packages: ["npm:pi-scenes"],
+		skills: ["~/skills-common"],
+	},
+	scenes: {
+		coding: {
+			description: "写代码",
+			packages: ["npm:pi-carryover", { source: "git:github.com/anthropics/skills", skills: ["skills/docx"] }],
+			// 场景 skills 指向全局 scenesRoot 下（与真实模板同构），测试用 makeCore 的 baseDir
+		skills: ["<ROOT>/scenes/coding/skills"],
+		},
+		office: {
+			description: "办公",
+			packages: [{ source: "git:github.com/anthropics/skills", skills: ["skills/pptx"] }],
+		skills: ["<ROOT>/scenes/office/skills"],
+		},
+	},
+};
+
+// 把 <ROOT> 占位符替换为各测试自己的 baseDir（scenesRoot 依赖 baseDir）
+function dualCfg(dir) {
+	return JSON.parse(JSON.stringify(DUAL_CFG).replaceAll("<ROOT>", dir));
+}
+
+test("v0.7 项目级切换：npm→全局层；git 对象→项目 delta + 全局锚点；场景 skills→项目相对路径", () => {
+	const { core, dir, projDir } = tmpDual();
+	const CFG = dualCfg(dir);
+	// 预置全局 scaffold 目录（vendor 源）
+	fs.mkdirSync(path.join(dir, "scenes", "coding", "skills", "my-skill"), { recursive: true });
+	fs.writeFileSync(path.join(dir, "scenes", "coding", "skills", "my-skill", "SKILL.md"), "name: my-skill\ndescription: t\n");
+
+	const r = core.applyToSettings(core.computeTarget("coding", CFG), "coding", undefined, "project");
+
+	const user = JSON.parse(fs.readFileSync(core.paths.settingsFile, "utf8"));
+	const proj = JSON.parse(fs.readFileSync(core.paths.projectSettingsFile, "utf8"));
+
+	// 全局层：common npm + 场景 npm + 锚点（零暴露）；无 git 白名单条目
+	assert.ok(user.packages.includes("npm:pi-scenes"), "common npm 在全局层");
+	assert.ok(user.packages.includes("npm:pi-carryover"), "场景 npm 在全局层");
+	const anchor = user.packages.find(
+		(p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills" && p.autoload === false,
+	);
+	assert.ok(anchor && Array.isArray(anchor.skills) && anchor.skills.length === 0, "全局层有零暴露锚点");
+	assert.ok(!user.packages.some((p) => typeof p === "object" && Array.isArray(p.skills) && p.skills.length > 0), "全局层无白名单条目");
+
+	// 项目层：git delta（autoload:false + 白名单）；无 npm 条目
+	const delta = proj.packages.find((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills");
+	assert.ok(delta && delta.autoload === false && delta.skills.includes("skills/docx"), "项目层有 delta 白名单");
+	assert.ok(!proj.packages.some((p) => p === "npm:pi-carryover"), "npm 不落项目层");
+
+	// skills：common 留全局；场景目录映射为项目相对路径 + vendor 复制
+	assert.ok(user.skills.includes("/Users/xxx-not-real") === false, "sanity");
+	assert.ok(user.skills.some((s) => s.endsWith("skills-common")), "common skills 在全局层");
+	assert.ok(proj.skills.includes("scenes/coding/skills"), "场景 skills 映射为项目相对路径");
+	assert.ok(fs.existsSync(path.join(projDir, "scenes", "coding", "skills", "my-skill", "SKILL.md")), "vendor 复制到项目目录");
+
+	// 状态双轨
+	assert.equal(core.loadProjectState().active, "coding");
+	assert.equal(core.loadUserState().active, null);
+	assert.equal(core.loadUserState().anchors.length, 1);
+	assert.ok(r.addedPackages.length >= 2);
+});
+
+test("v0.7 两层互斥：project 切换摘净 --global 遗留；--global 切换替换锚点", () => {
+	const { core, dir } = tmpDual();
+	const CFG = dualCfg(dir);
+
+	// 先 --global 切 coding（白名单条目直接进全局层）
+	core.applyToSettings(core.computeTarget("coding", CFG), "coding", undefined, "user");
+	let user = JSON.parse(fs.readFileSync(core.paths.settingsFile, "utf8"));
+	assert.ok(user.packages.some((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills" && !("autoload" in p)), "全局模式写白名单条目（无 autoload）");
+
+	// 再 project 切 office：全局层旧 managed 摘净、锚点重建，项目层换 delta
+	core.applyToSettings(core.computeTarget("office", CFG), "office", undefined, "project");
+	user = JSON.parse(fs.readFileSync(core.paths.settingsFile, "utf8"));
+	const proj = JSON.parse(fs.readFileSync(core.paths.projectSettingsFile, "utf8"));
+	assert.ok(!user.packages.some((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills" && Array.isArray(p.skills) && p.skills.length > 0), "全局层白名单被摘");
+	assert.ok(user.packages.some((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills" && p.autoload === false), "全局层留零暴露锚点");
+	assert.ok(user.packages.includes("npm:pi-carryover") === false, "旧场景 npm 随 managed 摘除");
+	const delta = proj.packages.find((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills");
+	assert.ok(delta && delta.skills.includes("skills/pptx"), "项目层 delta 换为 office 白名单");
+
+	// 再 --global 切 coding：锚点被白名单条目替换（用户层不双条目）
+	core.applyToSettings(core.computeTarget("coding", CFG), "coding", undefined, "user");
+	user = JSON.parse(fs.readFileSync(core.paths.settingsFile, "utf8"));
+	const anthEntries = user.packages.filter((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills");
+	assert.equal(anthEntries.length, 1, "全局层同包只有一条");
+	assert.ok(anthEntries[0].skills.includes("skills/docx") && !("autoload" in anthEntries[0]), "锚点被白名单替换");
+	assert.equal(core.loadUserState().anchors.length, 0, "锚点清单同步清空");
+});
+
+test("v0.7 off：摘两层 managed，锚点保留（下次切换秒切）", () => {
+	const { core, dir } = tmpDual();
+	const CFG = dualCfg(dir);
+	core.applyToSettings(core.computeTarget("coding", CFG), "coding", undefined, "project");
+	core.applyToSettings(core.computeTarget(null, CFG), null, undefined, "project");
+
+	let user = JSON.parse(fs.readFileSync(core.paths.settingsFile, "utf8"));
+	const proj = JSON.parse(fs.readFileSync(core.paths.projectSettingsFile, "utf8"));
+	assert.ok(!user.packages.includes("npm:pi-carryover"), "场景 npm 摘除");
+	assert.ok(user.packages.some((p) => typeof p === "object" && p.autoload === false), "锚点保留");
+	assert.deepEqual(proj.packages.filter((p) => typeof p === "object"), [], "项目层 delta 摘净");
+	assert.equal(core.loadProjectState().active, null);
+	assert.equal(core.loadUserState().active, null);
+
+	// 再切同场景：锚点已在不重复写
+	core.applyToSettings(core.computeTarget("coding", CFG), "coding", undefined, "project");
+	user = JSON.parse(fs.readFileSync(core.paths.settingsFile, "utf8"));
+	assert.equal(user.packages.filter((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills").length, 1, "锚点不重复");
+	assert.equal(core.loadUserState().anchors.length, 1);
 });

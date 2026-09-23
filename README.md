@@ -19,6 +19,8 @@ active resources = common layer ∪ current scene
 
 - **Common layer** — extensions + skills that stay loaded in *every* scenario (quota display, session carryover…)
 - **Scene layers** — per-scenario bundles (coding / office / writing…), loaded only while active
+- **Project-scoped by default (v0.7)** — `/scene office` writes activation entries to `<cwd>/.pi/settings.json`, so a scene belongs to *this* directory only; opening a fresh directory starts clean. `--global` keeps the ≤0.6 all-projects behavior
+- **Asset/activation split (v0.7)** — packages are installed once globally and shared across projects; git skill bundles are pinned as zero-exposure *anchors* (`{source, autoload:false, skills:[]}`) in user settings, while the project layer writes a *delta* (`{source, autoload:false, skills:[...]}`) that enables just the scene's whitelist — one clone, per-project curation, via pi's native delta mechanism
 - Switching rewrites `packages`/`skills` in `settings.json`, then `ctx.reload()` hot-reloads — **no pi restart, session untouched**
 - Every switch stamps a persistent **status-bar badge** (`◆ coding`, or a per-scene `icon` like `💻 coding`) so the bar always answers *"which scene am I in"* — restored at session start, cleared by `/scene off`
 - **Zero-memory discoverability (v0.4.1)** — the command hint lists your scene names, and Tab completion shows every scene (icon + description + current marker) plus subcommands: type `/scene c` + Tab → `/scene coding`
@@ -41,13 +43,15 @@ Then `/reload` and `/scene` is live.
 ## Quick start
 
 ```
-/scene            # picker: all scenes, ● current, ○ switchable
+/scene            # picker: all scenes, ● current project scene, ◐ global, ○ inactive
 /scene <Tab>      # tab-complete: lists all scenes (icon + description) and subcommands
 /scene c<Tab>     # completes to /scene coding — no scene names to memorize
-/scene coding     # switch directly to the coding scene
+/scene coding     # switch to the coding scene (project-scoped: <cwd>/.pi only)
+/scene coding --global  # switch as a global scene (every project, ≤0.6 behavior)
 /scene office     # switch to the office scene
-/scene off        # common layer only (scene off)
-/scene status     # show active scene + effective packages/skills
+/scene off        # common layer only (clears both layers; anchors kept)
+/scene status     # show project/global scenes + effective packages/skills
+/scene migrate    # convert a ≤0.6 legacy global scene into this project's scene
 /scene init       # scaffold scenes.json template + scene skill dirs
 /scene stats      # usage dashboard: sessions, tool calls, reflections
 /scene evolve     # generate & apply evolution proposals (confirm-first)
@@ -102,6 +106,21 @@ Edit it to fit your setup (each scene also gets a skill dir scaffold at `~/.pi/a
 ```
 
 Drop `SKILL.md` folders (or `.md` files) into a scene's skill directory; the whole directory toggles with the scene. `/scene init` scaffolds `~/.pi/agent/scenes/{common,coding,office,pm,research,writing,data}/skills/`.
+
+### Project vs global scopes (v0.7)
+
+Scenes default to **project scope**: activation entries land in `<cwd>/.pi/settings.json`, scene skill dirs in `<cwd>/.pi/scenes/<name>/skills` (vendored skills are copied there on first switch — power-of-copy, edit freely). A new directory starts with the common layer only; nothing leaks across projects.
+
+Under the hood the two settings layers split cleanly:
+
+| Layer | File | What lands there |
+|---|---|---|
+| asset | `~/.pi/agent/settings.json` | npm/local extensions (tools, not prompt tokens), common-layer skills, zero-exposure anchors for git skill bundles |
+| activation | `<cwd>/.pi/settings.json` | per-scene delta entries (`autoload:false` + skills whitelist), scene skill dir paths |
+
+Anchors make re-switching instant: the git clone stays warm in `~/.pi/agent/git`, so switching scenes in another project never re-downloads 15MB. `/scene off` keeps anchors on purpose (they expose zero skills); `/scene <name> --global` replaces an anchor with a full whitelist entry for all-project activation. Layers are mutually exclusive — switching always reclaims both layers' previous managed entries first, then writes the new one.
+
+Upgrading from ≤0.6? The first session shows a one-time notice; `/scene migrate` converts the legacy global scene into this project's scene in one step.
 
 ### Status-bar scene badge
 
@@ -229,6 +248,8 @@ pi 的 `packages` / `skills` 是全局平铺的：所有已安装扩展、所有
 
 - **通用层**：任何场景下恒加载的 extension + skill（如配额显示、会话延续）
 - **场景层**：每个场景自己的一组 extension + skill，激活才加载
+- **默认项目级（v0.7）**——`/scene office` 把激活条目写进 `<cwd>/.pi/settings.json`，场景只属于当前目录；新建目录零残留、干净启动。`--global` 保留 ≤0.6 的全目录生效语义
+- **资产/激活分离（v0.7）**——包只全局装一份、所有项目共享；git 技能包在全局层钉为零暴露**锚点**（`{source, autoload:false, skills:[]}`），项目层写 **delta**（`{source, autoload:false, skills:[白名单]}`）按场景启用——借 pi 原生 delta 机制做到「一份克隆、每项目各自的精选」
 - 切换 = 改写 `settings.json` 的 `packages`/`skills` → `ctx.reload()` 热重载，**无需重启 pi**
 - 每次切换成功后状态栏常驻**场景徽标**（`◆ coding`，或每场景自定义 `icon` 如 `💻 coding`），状态栏随时回答「我现在在哪个场景」——会话启动自动恢复，`/scene off` 清除
 - **零记忆可发现性（v0.4.1）**——命令提示行直接拼入场景名清单；Tab 补全列出全部场景（icon + 描述 + 当前标记）与子命令：`/scene c` + Tab → `/scene coding`
@@ -251,13 +272,15 @@ pi install git:github.com/Feng-H/pi-scenes
 ## 快速开始
 
 ```
-/scene            # 弹出选择器：列出所有场景，● 当前，○ 可切
+/scene            # 弹出选择器：● 当前项目场景，◐ 当前全局场景，○ 可切
 /scene <Tab>      # Tab 补全：列出全部场景（icon + 描述）与子命令
 /scene c<Tab>     # 补齐为 /scene coding —— 无需记忆任何场景名
-/scene coding     # 直接切到 coding 场景
+/scene coding     # 切到 coding 场景（项目级：只写入 <cwd>/.pi）
+/scene coding --global  # 切为全局场景（所有目录生效，≤0.6 语义）
 /scene office     # 切到办公场景
-/scene off        # 仅保留通用层（关闭场景）
-/scene status     # 查看当前激活 + 生效的 packages/skills 清单
+/scene off        # 仅保留通用层（摘两层；资产锚点保留）
+/scene status     # 查看项目/全局两级场景 + 生效 packages/skills
+/scene migrate    # 把 ≤0.6 遗留的全局场景转为当前项目场景
 /scene init       # 生成模板 scenes.json + 场景 skill 目录骨架
 /scene stats      # 用量仪表盘：会话数 / 工具调用 / 反思评分
 /scene evolve     # 生成并应用进化提案（逐条确认）
@@ -309,7 +332,7 @@ pi install git:github.com/Feng-H/pi-scenes
 
 ### 状态栏场景徽标
 
-切换成功后状态栏常驻徽标（`◆ coding`），每次会话启动自动恢复，`/scene off` 清除。状态栏应该回答「我现在在哪个场景」——而不是展示工具的内部状态。
+切换成功后状态栏常驻徽标（项目场景 `◆ coding`，全局场景 `◇ coding ⌘`），每次会话启动自动恢复，`/scene off` 清除。状态栏应该回答「我现在在哪个场景、哪一层」——而不是展示工具的内部状态。
 
 徽标前缀可按场景用 `icon` 字段定制——emoji 完全可用（`💻 coding`）。脚手架预设自带 `💻 📄 🎯 🔍 📝 📊`，选择器与 `/scene status` 同步显示同一 icon；未配置的场景回退 `◆`。
 
@@ -320,6 +343,21 @@ pi install git:github.com/Feng-H/pi-scenes
 ```
 
 pi-scenes 绝不改第三方包的全局配置——徽标是它放到状态栏上的唯一东西。
+
+### 项目级 vs 全局（v0.7）
+
+场景默认**项目级**：激活条目写入 `<cwd>/.pi/settings.json`，场景技能目录在 `<cwd>/.pi/scenes/<名>/skills`（预置技能首次切换时复制过去，复制即所有，随意改删）。新建目录只有通用层，项目间零泄漏。
+
+两层 settings 各司其职：
+
+| 层 | 文件 | 落点内容 |
+|---|---|---|
+| 资产层 | `~/.pi/agent/settings.json` | npm/本地扩展（工具不占提示 token）、通用层 skills、git 技能包零暴露锚点 |
+| 激活层 | `<cwd>/.pi/settings.json` | 场景 delta 条目（`autoload:false` + skills 白名单）、场景技能目录路径 |
+
+锚点让重切秒级：git 克隆常驻 `~/.pi/agent/git`，换个项目再切同一场景不会重新下载 15M。`/scene off` 有意保留锚点（零技能暴露、零成本）；`/scene <名> --global` 会把锚点替换为完整白名单条目（全目录生效）。两层互斥：任何切换都先摘净两层旧 managed 再写新层。
+
+从 ≤0.6 升级？首个会话会提示一次；`/scene migrate` 一步把遗留全局场景转为当前项目场景。
 
 ## 自进化（用量驱动）
 
