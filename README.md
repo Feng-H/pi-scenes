@@ -222,8 +222,29 @@ In short: **installed forever, loaded per scene**. One caveat: extensions you in
 | `scenes.<name>.packages` | accepts `"npm:<pkg>"`, `"git:github.com/u/r"`, local paths, and object form (resource filtering, same grammar as pi settings) |
 | `scenes.<name>.icon` | status-bar badge & picker prefix (emoji recommended; default `◆`) |
 | `scenes.<name>.skills` | paths/directories, `~` expanded |
+| `scenes.<name>.prompts` | prompt-template files/directories (`\u200b.md`), `~` expanded; injected via `resources_discover`, never written to settings (v0.8) |
 | `scenes.<name>.extends` | 🧪 inherit a parent scene (union merge + cycle detection) — forward-compatible entry for parent→child hierarchies |
 | `evolve.patience` / `evolve.absorbThreshold` / `evolve.skillUnusedThreshold` | self-evolution tunables (see "Self-evolution") |
+
+## Scene-scoped prompt templates (v0.8)
+
+Fixed workflows (release checklists, review procedures, research protocols) belong to scenes too. v0.8 adds a `prompts` field per scene, turning a scene into **tools + skills + workflow templates** as one unit.
+
+```jsonc
+"scenes": {
+  "research": {
+    "packages": ["npm:pi-web-access"],
+    "skills": ["~/.pi/agent/scenes/research/skills"],
+    "prompts": ["~/.pi/agent/scenes/research/prompts"]  // ← new
+  }
+}
+```
+
+**How it's wired — zero settings pollution.** The extension listens to pi's `resources_discover` event: on every startup/reload pi asks which extra resource paths to load, and pi-scenes answers with the active scene's `promptPaths`. Switching away simply stops returning them — templates vanish with **no settings writes, no cleanup, no residue** (unlike packages/skills, which land in settings.json).
+
+- Scaffold preseeds one workflow template per preset scene (`/pre-commit` for coding, `/deep-dive` for research, `/fact-check` for writing, `/prd-skeleton` for pm, `/doc-from-notes` for office, `/data-audit` for data), vendored into `~/.pi/agent/scenes/<scene>/prompts/` (idempotent copy, yours to edit)
+- Same-name resolution: your hand-written templates (`~/.pi/agent/prompts/`, project `.pi/prompts/`) and package templates **win over** scene templates — user intent beats presets
+- Why templates at all: they pin down step-by-step procedures so the model can't take shortcuts; human remembers the command name, the template carries the checklist
 
 ## Rollback
 
@@ -464,8 +485,29 @@ pi-scenes 绝不改第三方包的全局配置——徽标是它放到状态栏�
 | `scenes.<name>.packages` | 支持 `"npm:<pkg>"`、`"git:github.com/u/r"`、本地路径字符串，及 object form（资源过滤，同 pi settings 规范） |
 | `scenes.<name>.icon` | 状态栏徽标与选择器前缀（建议 emoji；缺省 `◆`） |
 | `scenes.<name>.skills` | 路径/目录数组，支持 `~` 展开 |
+| `scenes.<name>.prompts` | prompt 模板文件/目录（`.md`），支持 `~` 展开；经 `resources_discover` 动态注入，永不写 settings（v0.8） |
 | `scenes.<name>.extends` | 🧪 继承父场景（union 合并，带环检测）——「主场景→子场景」层级的前向兼容入口 |
 | `evolve.patience` / `evolve.absorbThreshold` / `evolve.skillUnusedThreshold` | 自进化阈值（见「自进化」节） |
+
+## 场景化 prompt 模板（v0.8）
+
+固定流程（发版体检、审查步骤、调研套路）也属于场景。v0.8 为每个场景新增 `prompts` 字段，场景成为**工具 + 技能 + 流程模板**三位一体：
+
+```jsonc
+"scenes": {
+  "research": {
+    "packages": ["npm:pi-web-access"],
+    "skills": ["~/.pi/agent/scenes/research/skills"],
+    "prompts": ["~/.pi/agent/scenes/research/prompts"]  // ← 新增
+  }
+}
+```
+
+**接线方式——零 settings 污染。** 与 packages/skills 落 settings.json 不同，模板走 pi 的 `resources_discover` 事件：每次启动/重载 pi 会询问各扩展需要加载哪些额外资源，pi-scenes 按当前激活场景返回模板路径。切走场景后不再返回——模板自动消失，**不写 settings、无需清理、零残留**。
+
+- scaffold 为每个预设场景预置一个流程模板（coding→`/pre-commit`、research→`/deep-dive`、writing→`/fact-check`、pm→`/prd-skeleton`、office→`/doc-from-notes`、data→`/data-audit`），vendored 复制到 `~/.pi/agent/scenes/<场景>/prompts/`（幂等，复制后归你所有，可改可删）
+- 同名解析：你手写的模板（`~/.pi/agent/prompts/`、项目 `.pi/prompts/`）与包模板**优先于**场景模板——用户意图压过预设
+- 为什么需要模板：把步骤清单固化成模板，模型就无法挑最快路径跳步；人只记命令名，清单由模板携带
 
 ## 回退方案
 

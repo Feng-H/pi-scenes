@@ -4,6 +4,8 @@
  * 核心思想：
  *   生效资源 = 通用层(common) ∪ 当前场景(scene)
  *   切换场景 = 改写 settings 的 packages/skills 数组 → ctx.reload() 热重载
+ *   v0.8：场景化 prompt 模板 —— 不写 settings，监听 resources_discover 事件
+ *   按当前激活场景动态返回 promptPaths（零持久化，切走即无）
  *
  * 双层模型（v0.7）：资产层（user 全局）与激活层（project 项目）分离
  *   旧版（≤0.6）把场景条目全部写进 ~/.pi/agent/settings.json —— 换目录启动 pi
@@ -90,6 +92,9 @@ export interface SceneDef {
 	packages?: PackageEntry[];
 	/** skill 文件/目录路径，支持 ~ 前缀 */
 	skills?: string[];
+	/** prompt 模板文件/目录路径（.md），支持 ~ 前缀；经 resources_discover 动态注入，不落 settings。
+	 *  同名时优先级低于用户手写模板（~/.pi/agent/prompts、项目 .pi/prompts）与包模板 */
+	prompts?: string[];
 }
 
 export interface EvolveConfig {
@@ -510,7 +515,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 
 	/** 解析场景（沿 extends 链 union 合并，带环检测）——主场景/子场景的落点 */
 	function resolveScene(name: string, cfg: ScenesFile): SceneDef {
-		const merged: SceneDef = { packages: [], skills: [] };
+		const merged: SceneDef = { packages: [], skills: [], prompts: [] };
 		const seen = new Set<string>();
 		let cur: string | null = name;
 		while (cur) {
@@ -520,6 +525,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 			if (!def) throw new Error(`场景不存在：${cur}`);
 			merged.packages = dedupeEntries([...(merged.packages ?? []), ...(def.packages ?? [])]);
 			merged.skills = [...new Set([...(merged.skills ?? []), ...(def.skills ?? [])])];
+			merged.prompts = [...new Set([...(merged.prompts ?? []), ...(def.prompts ?? [])])];
 			if (def.description && !merged.description) merged.description = def.description;
 			cur = def.extends ?? null;
 		}
@@ -533,7 +539,10 @@ export function makeCore(baseDir: string, projectDir?: string) {
 	}
 
 	/** 生效集合 = 通用层 ∪ 场景链（skills 展开 ~，去重；拆分 common/scene 归属供双层落点） */
-	function computeTarget(active: string | null, cfg: ScenesFile): { packages: PackageEntry[]; skills: string[]; commonSkills: string[]; sceneSkills: string[] } {
+	function computeTarget(
+		active: string | null,
+		cfg: ScenesFile,
+	): { packages: PackageEntry[]; skills: string[]; commonSkills: string[]; sceneSkills: string[]; prompts: string[] } {
 		const common = cfg.common ?? {};
 		let scene: SceneDef = {};
 		if (active) scene = resolveScene(active, cfg);
@@ -541,7 +550,8 @@ export function makeCore(baseDir: string, projectDir?: string) {
 		const commonSkills = [...new Set([...(common.skills ?? [])].map(expandHome))];
 		const sceneSkills = [...new Set([...(scene.skills ?? [])].map(expandHome))];
 		const skills = [...new Set([...commonSkills, ...sceneSkills])];
-		return { packages, skills, commonSkills, sceneSkills };
+		const prompts = [...new Set([...(common.prompts ?? []), ...(scene.prompts ?? [])].map(expandHome))];
+		return { packages, skills, commonSkills, sceneSkills, prompts };
 	}
 
 	/** 包是否已安装（探测 npm 目录 / git clone 目录 / 本地路径） */
@@ -987,6 +997,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 					"npm:pi-carryover", // 跨会话工作承接（上次干到哪、下次接着干）
 				],
 				skills: ["~/.pi/agent/scenes/common/skills"],
+				prompts: ["~/.pi/agent/scenes/common/prompts"],
 			},
 			scenes: {
 				coding: {
@@ -1007,6 +1018,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 						},
 					],
 					skills: ["~/.pi/agent/scenes/coding/skills"],
+					prompts: ["~/.pi/agent/scenes/coding/prompts"], // scaffold 预置 pre-commit 提交前自检
 				},
 				office: {
 					description: "办公：文档解析与生成、内部沟通",
@@ -1019,6 +1031,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 						},
 					],
 					skills: ["~/.pi/agent/scenes/office/skills"],
+					prompts: ["~/.pi/agent/scenes/office/prompts"], // scaffold 预置 doc-from-notes 笔记成文
 				},
 				pm: {
 					description: "产品经理：竞品调研、目标规划与需求跟踪",
@@ -1030,6 +1043,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 						"npm:@juicesharp/rpiv-ask-user-question", // 结构化提问：类型化选项代替自由猜测（需求澄清）
 					],
 					skills: ["~/.pi/agent/scenes/pm/skills"],
+					prompts: ["~/.pi/agent/scenes/pm/prompts"], // scaffold 预置 prd-skeleton 需求骨架
 				},
 				research: {
 					description: "咨询调研：多源检索、并行多角度深挖、学术文献",
@@ -1039,6 +1053,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 						"npm:pi-subagents", // 多角度并行调研（每个子代理一源）
 					],
 					skills: ["~/.pi/agent/scenes/research/skills"], // scaffold 预置 arxiv-research / openalex-paper-search
+					prompts: ["~/.pi/agent/scenes/research/prompts"], // scaffold 预置 deep-dive 深度调研
 				},
 				writing: {
 					description: "写作：素材检索、事实核查、文体打磨",
@@ -1051,6 +1066,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 						},
 					],
 					skills: ["~/.pi/agent/scenes/writing/skills"], // scaffold 预置 humanizer
+					prompts: ["~/.pi/agent/scenes/writing/prompts"], // scaffold 预置 fact-check 事实核查
 				},
 				data: {
 					description: "数据分析：表格抽取、MCP 接数据库/BI",
@@ -1060,6 +1076,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 						"npm:pi-mcp-adapter", // 接任意 MCP server（数据库/BI/内部数据服务）
 					],
 					skills: ["~/.pi/agent/scenes/data/skills"],
+					prompts: ["~/.pi/agent/scenes/data/prompts"], // scaffold 预置 data-audit 数据审计
 				},
 			},
 		};
@@ -1068,10 +1085,12 @@ export function makeCore(baseDir: string, projectDir?: string) {
 			created.push(paths.scenesFile);
 		}
 		for (const s of ["common", "coding", "office", "pm", "research", "writing", "data"]) {
-			const dir = path.join(paths.scenesRoot, s, "skills");
-			if (!fs.existsSync(dir)) {
-				fs.mkdirSync(dir, { recursive: true });
-				created.push(dir);
+			for (const kind of ["skills", "prompts"] as const) {
+				const dir = path.join(paths.scenesRoot, s, kind);
+				if (!fs.existsSync(dir)) {
+					fs.mkdirSync(dir, { recursive: true });
+					created.push(dir);
+				}
 			}
 		}
 		// 预置精选技能：从包内 assets/scene-skills/<场景>/ 复制到场景 skill 目录。
@@ -1092,6 +1111,17 @@ export function makeCore(baseDir: string, projectDir?: string) {
 					}
 				}
 			}
+				// v0.8：预置场景模板 assets/scene-prompts/<场景>/*.md → scenes/<场景>/prompts/（幂等复制，不覆盖用户已有）
+				const promptsAssetsRoot = path.join(pkgRoot, "assets", "scene-prompts");
+				if (fs.existsSync(promptsAssetsRoot)) {
+					for (const scene of fs.readdirSync(promptsAssetsRoot)) {
+						const srcScene = path.join(promptsAssetsRoot, scene);
+						if (!fs.statSync(srcScene).isDirectory()) continue;
+						const dst = path.join(paths.scenesRoot, scene, "prompts");
+						const copied = copyTreeIfMissing(srcScene, dst);
+						if (copied > 0) created.push(dst);
+					}
+				}
 		} catch {
 			// 资产复制失败不阻断 scaffold（如测试环境无 assets）
 		}
@@ -1245,8 +1275,9 @@ export default function (pi: ExtensionAPI) {
 
 		const r = core.applyToSettings(target, name, preInstallPackages, scope);
 		updateSceneBadge(ctx);
+		const promptCount = target.prompts.filter((p) => fs.existsSync(p)).length;
 		ctx.ui.notify(
-			`已切换到 ${label}\n  +${r.addedPackages.length} 包 +${r.addedSkills.length} skill · -${r.removedPackages.length} 包 -${r.removedSkills.length} skill\n  正在热重载…`,
+			`已切换到 ${label}\n  +${r.addedPackages.length} 包 +${r.addedSkills.length} skill · -${r.removedPackages.length} 包 -${r.removedSkills.length} skill · 模板目录 ${promptCount}/${target.prompts.length}\n  正在热重载…`,
 			"info",
 		);
 		await ctx.reload();
@@ -1347,6 +1378,7 @@ export default function (pi: ExtensionAPI) {
 					`生效场景：${active ? `${cfg.scenes?.[active]?.icon?.trim() || "◆"} ${active}` : "（无，仅通用层）"}`,
 					`生效 packages（${target.packages.length}）：${target.packages.map(specOf).join(", ") || "—"}`,
 					`生效 skills（${target.skills.length}）：${target.skills.join(", ") || "—"}`,
+					`生效 prompt 模板（${target.prompts.length}，resources_discover 注入）：${target.prompts.join(", ") || "—"}`,
 					`可用场景：${Object.keys(cfg.scenes ?? {}).join(", ") || "—"}`,
 				];
 				if ((user.anchors?.length ?? 0) > 0) {
@@ -1615,6 +1647,19 @@ export default function (pi: ExtensionAPI) {
 			}
 		} catch {}
 	}
+
+	// v0.8：场景化 prompt 模板 —— resources_discover 事件动态注入。
+	// 每次 startup/reload pi 都会询问本扩展；按当前激活场景返回 promptPaths，
+	// 切走后不再返回 → 模板自动消失，零 settings 写入、零残留。
+	// 同名时用户手写模板（~/.pi/agent/prompts、项目 .pi/prompts）与包模板优先于场景模板。
+	pi.on("resources_discover", async () => {
+		try {
+			const cfg = core.loadScenes();
+			return { promptPaths: core.computeTarget(core.effectiveActive(), cfg).prompts };
+		} catch {
+			return {};
+		}
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		try {

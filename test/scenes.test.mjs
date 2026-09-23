@@ -563,3 +563,82 @@ test("v0.7 off：摘两层 managed，锚点保留（下次切换秒切）", () =
 	assert.equal(user.packages.filter((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills").length, 1, "锚点不重复");
 	assert.equal(core.loadUserState().anchors.length, 1);
 });
+
+// ── v0.8：场景化 prompt 模板 ──────────────────────────────
+
+test("v0.8 computeTarget：prompts 通用层 ∪ 场景，~ 展开，去重", () => {
+	const { core } = tmpBase();
+	const cfg = {
+		common: { packages: [], skills: [], prompts: ["~/prompts-common", "/abs/tpl.md"] },
+		scenes: {
+			coding: { prompts: ["~/prompts-common", "~/.pi/agent/scenes/coding/prompts"] },
+			"coding-debug": { extends: "coding", prompts: ["~/prompts-debug"] },
+		},
+	};
+	const t = core.computeTarget("coding", cfg);
+	assert.deepEqual(t.prompts, [
+		`${os.homedir()}/prompts-common`,
+		"/abs/tpl.md",
+		`${os.homedir()}/.pi/agent/scenes/coding/prompts`,
+	]);
+	// extends 链 union：子场景含父场景 prompts
+	const t2 = core.computeTarget("coding-debug", cfg);
+	assert.ok(t2.prompts.includes(`${os.homedir()}/prompts-debug`));
+	assert.ok(t2.prompts.includes(`${os.homedir()}/.pi/agent/scenes/coding/prompts`));
+	// 仅通用层
+	const t0 = core.computeTarget(null, cfg);
+	assert.deepEqual(t0.prompts, [`${os.homedir()}/prompts-common`, "/abs/tpl.md"]);
+});
+
+test("v0.8 resolveScene：prompts 沿 extends 链 union", () => {
+	const { core } = tmpBase();
+	const cfg = {
+		scenes: {
+			base: { prompts: ["~/a"] },
+			child: { extends: "base", prompts: ["~/b"] },
+		},
+	};
+	// 既有语义：从子场景沿 extends 向上合并，子场景条目在前
+	assert.deepEqual(core.resolveScene("child", cfg).prompts, ["~/b", "~/a"]);
+});
+
+test("v0.8 scaffold：模板 scenes.json 含 prompts 字段 + prompts 目录骨架 + 预置模板复制", () => {
+	const { core } = tmpBase();
+	const created = core.scaffold();
+	// 1) scenes.json 每个场景（含 common）声明 prompts 目录
+	const cfg = core.loadScenes();
+	const all = ["common", ...Object.keys(cfg.scenes)];
+	for (const s of all) {
+		const def = s === "common" ? cfg.common : cfg.scenes[s];
+		assert.ok(Array.isArray(def.prompts) && def.prompts.length > 0, `${s} prompts`);
+	}
+	// 2) prompts 目录骨架
+	for (const s of ["common", "coding", "office", "pm", "research", "writing", "data"]) {
+		assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, s, "prompts")), `${s}/prompts`);
+	}
+	// 3) 预置模板从包内 assets/scene-prompts 复制（幂等，不覆盖已有）
+	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md")));
+	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "research", "prompts", "deep-dive.md")));
+	// 幂等：用户改过的文件不被 scaffold 覆盖
+	const mine = path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md");
+	fs.writeFileSync(mine, "用户自定义内容");
+	core.scaffold();
+	assert.equal(fs.readFileSync(mine, "utf8"), "用户自定义内容");
+});
+
+test("v0.8 resources_discover 语义：prompts 不写 settings，切走零残留", () => {
+	const { core } = tmpBase();
+	const cfg = core.loadScenes() || {};
+	cfg.scenes = { coding: { packages: ["npm:pi-lens"], prompts: ["~/my-templates"] } };
+	core.saveScenes(cfg);
+	// 模拟切换到 coding：settings 只会写 packages/skills
+	core.applyToSettings(core.computeTarget("coding", cfg), "coding", undefined, "project");
+	const proj = JSON.parse(fs.readFileSync(core.paths.projectSettingsFile, "utf8"));
+	const user = JSON.parse(fs.readFileSync(core.paths.settingsFile, "utf8"));
+	assert.equal(proj.prompts, undefined, "prompts 绝不写入项目 settings");
+	assert.equal(user.prompts, undefined, "prompts 绝不写入全局 settings");
+	assert.ok(Array.isArray(user.packages) && user.packages.some((e) => e === "npm:pi-lens" || e?.source === "npm:pi-lens"), "包条目正常落 settings（仅 prompts 走动态注入）");
+	// 动态注入源 = computeTarget(active).prompts（切走后 effectiveActive 变化 → 路径自动消失）
+	const active = core.computeTarget(core.effectiveActive(), core.loadScenes());
+	assert.deepEqual(active.prompts, [`${os.homedir()}/my-templates`]);
+});
