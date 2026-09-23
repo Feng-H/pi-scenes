@@ -262,6 +262,22 @@ cp ~/.pi/agent/settings.json.scenes-bak ~/.pi/agent/settings.json   # restore if
 
 Before uninstalling, `/scene off` and prune entries you don't want to keep from `packages`/`skills`. `scenes.json` / `scenes-state.json` / the `scenes/` tree are inert leftovers — safe to keep or delete.
 
+## Changelog
+
+### v0.9.0 (2026-09-23)
+
+- **New preset scene: `learning` 📚** (8th preset) — knowledge internalization, verification, and spaced review. Ships `pi-web-access` (learning materials) + `pi-subagents` (parallel multi-perspective study), three workflow templates (`/feynman` four-step internalization, `/socratic` question-only verification, `/flashcards` Q&A+cloze cards with a spaced-repetition schedule), and a vendored `eli5` skill (analogy-first, zero-jargon first pass, 5yo/12yo/adult three-tier explanations)
+- **Preset fix: removed `openclaw/agent-skills` from coding** — verified as an OpenClaw-project-internal workflow library rather than general-purpose coding skills (autoreview hard-codes an OpenAI/Codex preference; handoff is a clipboard-prompt workflow). Its duties were already covered by `pi-simplify` / `pi-subagents`. Lesson recorded: existence verification ≠ positioning verification
+- Full preset audit: 10 npm extensions, 9 anthropics/skills subsets, 3 vendored skills — all verified real and accurately described
+
+### v0.8.0 (2026-09-23)
+
+- **Scene-scoped prompt templates** — `prompts` field per scene: scene = tools + skills + workflow templates as one unit. Injected via pi's `resources_discover` event: **zero settings writes, templates vanish when you switch away** (unlike packages/skills which land in settings.json)
+- Same-name resolution: your hand-written templates and package templates win over scene presets — user intent beats presets
+- Six preset workflow templates (`/pre-commit`, `/deep-dive`, `/fact-check`, `/prd-skeleton`, `/doc-from-notes`, `/data-audit`), each an explicit step-by-step checklist the model cannot skip
+- Scaffold creates `prompts/` directory skeletons and vendors preset templates idempotently (never overwrites your edits); `/scene status` shows effective templates; switch notification counts template dirs
+- Backward compatible: existing scenes.json without `prompts` behaves exactly as v0.7
+
 ## Development
 
 ```bash
@@ -530,6 +546,22 @@ cp ~/.pi/agent/settings.json.scenes-bak ~/.pi/agent/settings.json   # 如需恢�
 ```
 
 managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packages`/`skills` 里不想保留的条目；`scenes.json` / `scenes-state.json` / `scenes/` 目录留着不影响 pi 运行。
+
+## 版本历史
+
+### v0.9.0（2026-09-23）
+
+- **新增预设场景 `learning` 📚**（第八个）——知识内化、检验、间隔复习。携带 `pi-web-access`（学习材料）+ `pi-subagents`（并行多视角学习）、三个流程模板（`/feynman` 费曼四步内化、`/socratic` 只问不讲的苏格拉底检验、`/flashcards` Q&A+填空双卡型配间隔复习排程）、vendored 技能 `eli5`（类比先行、零术语首过、5 岁/12 岁/成人三档递进）
+- **预设修正：coding 场景移除 `openclaw/agent-skills`**（随本版发布）——核验其为 OpenClaw 项目内部工作流库而非通用编码技能（autoreview 硬编码 OpenAI/Codex 偏好；handoff 是剪贴板提示词流程），其职责已由 `pi-simplify` / `pi-subagents` 覆盖。教训：存在核验 ≠ 定位核验
+- 全预设体检：npm 扩展×10、anthropics/skills 子集×9、vendored×3，全部真实存在且描述如述
+
+### v0.8.0（2026-09-23）
+
+- **场景化 prompt 模板**——场景新增 `prompts` 字段：场景成为工具+技能+流程模板三位一体。注入走 pi 的 `resources_discover` 事件：**零 settings 写入、切走模板自动消失**（与落 settings.json 的 packages/skills 不同路径）
+- 同名解析：用户手写模板与包模板优先于场景预设——用户意图压过预设
+- 六个预置流程模板（`/pre-commit` 提交自检、`/deep-dive` 深度调研、`/fact-check` 事实核查、`/prd-skeleton` 需求骨架、`/doc-from-notes` 笔记成文、`/data-audit` 数据审计），每个都是显式步骤清单、模型无法跳步
+- scaffold 生成 `prompts/` 目录骨架 + 预置模板 vendored 幂等复制（不覆盖你的修改）；`/scene status` 显示生效模板；切换通知带模板目录计数
+- 向后兼容：存量 scenes.json 无 `prompts` 字段时行为与 v0.7 完全一致
 
 ## 开发
 
