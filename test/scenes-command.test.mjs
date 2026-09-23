@@ -221,7 +221,7 @@ test("参数 Tab 补全：场景名+子命令全量列出、前缀过滤、多�
 	const all = gc("");
 	const coding = all.find((i) => i.value === "coding");
 	assert.ok(coding && coding.label.includes("💻") && String(coding.description).includes("写代码"));
-	for (const sub of ["off", "status", "migrate", "init", "stats", "evolve", "evolve auto"]) {
+	for (const sub of ["off", "status", "migrate", "init", "stats", "update-assets", "evolve", "evolve auto"]) {
 		assert.ok(all.some((i) => i.value === sub), `空前缀应包含子命令 ${sub}`);
 	}
 	// 场景排在子命令前（先场景后子命令的固定顺序）
@@ -241,6 +241,6 @@ test("参数 Tab 补全：场景名+子命令全量列出、前缀过滤、多�
 	// scenes.json 缺失：不抛异常，仍补全子命令
 	fs.rmSync(path.join(dir, "scenes.json"));
 	const onlySubs = gc("");
-	assert.ok(onlySubs.length > 0 && onlySubs.every((i) => ["off", "status", "migrate", "init", "stats", "evolve", "evolve auto"].includes(i.value)));
+	assert.ok(onlySubs.length > 0 && onlySubs.every((i) => ["off", "status", "migrate", "init", "stats", "update-assets", "evolve", "evolve auto"].includes(i.value)));
 	assert.deepEqual(gc("ini").map((i) => i.value), ["init"]);
 });

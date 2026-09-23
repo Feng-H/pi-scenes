@@ -76,6 +76,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ── 类型 ────────────────────────────────────────────────────
@@ -429,6 +430,8 @@ export interface CorePaths {
 	projectSettingsFile: string; // <cwd>/.pi/settings.json
 	projectStateFile: string; // <cwd>/.pi/scenes-state.json
 	projectScenesRoot: string; // <cwd>/.pi/scenes
+	// v0.10：vendored 资产指纹（包内预设 vs 用户落盘的安全更新基线）
+	assetsManifest: string; // <scenesRoot>/.assets-manifest.json
 }
 
 export function makeCore(baseDir: string, projectDir?: string) {
@@ -446,6 +449,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 		projectSettingsFile: path.join(projDir, "settings.json"),
 		projectStateFile: path.join(projDir, "scenes-state.json"),
 		projectScenesRoot: path.join(projDir, "scenes"),
+		assetsManifest: path.join(baseDir, "scenes", ".assets-manifest.json"),
 	};
 
 	function loadScenes(): ScenesFile {
@@ -981,6 +985,134 @@ export function makeCore(baseDir: string, projectDir?: string) {
 		return { tools, commands };
 	}
 
+	// ── v0.10：vendored 资产指纹与安全更新 ──────────────────
+	// 问题：scaffold 只补缺失不更新（copyTreeIfMissing 语义），包升级改了预置资产后
+	// 用户落盘永远是旧版，且无感知。方案：manifest 记录「上次同步时的内容 hash」作
+	// 为预设基线——用户未改过（落盘==基线）→ 跟随包新版；用户改过 → 保留用户版。
+	// 所有权语义：预设层（vendored）≠ 资产层（包）≠ 激活层（settings），移交但不断更。
+
+	function hashFileContent(file: string): string {
+		return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+	}
+
+	/** 目录指纹：递归收集 [相对路径, 文件hash] 排序后整体 hash（文件集变更即变） */
+	function hashDirContent(dir: string): string {
+		const parts: string[] = [];
+		const walk = (d: string, rel: string) => {
+			for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+				const full = path.join(d, e.name);
+				if (e.isDirectory()) walk(full, `${rel}${e.name}/`);
+				else parts.push(`${rel}${e.name}:${hashFileContent(full)}`);
+			}
+		};
+		walk(dir, "");
+		return createHash("sha256").update(parts.join("\n")).digest("hex");
+	}
+
+	type AssetsManifest = { files: Record<string, string> };
+
+	function loadAssetsManifest(): AssetsManifest {
+		// readJson 返回的就是 { files: {...} } 整体，不能再包一层
+		return readJson<AssetsManifest>(paths.assetsManifest, { files: {} });
+	}
+
+	function saveAssetsManifest(m: AssetsManifest): void {
+		writeJson(paths.assetsManifest, m);
+	}
+
+	/** 包内 vendored 资产全集：键=相对 scenesRoot 路径，值={pkgPath(绝对), isDir, hash} */
+	function enumeratePkgAssets(assetsRoots: { skills: string; prompts: string }): Map<string, { pkgPath: string; isDir: boolean; hash: string }> {
+		const out = new Map<string, { pkgPath: string; isDir: boolean; hash: string }>();
+		const skillsRoot = assetsRoots.skills;
+		if (fs.existsSync(skillsRoot)) {
+			for (const scene of fs.readdirSync(skillsRoot)) {
+				const sceneDir = path.join(skillsRoot, scene);
+				if (!fs.statSync(sceneDir).isDirectory()) continue;
+				for (const skill of fs.readdirSync(sceneDir)) {
+					const pkgPath = path.join(sceneDir, skill);
+					if (!fs.statSync(pkgPath).isDirectory()) continue;
+					if (!fs.existsSync(path.join(pkgPath, "SKILL.md"))) continue; // 与 scaffold 同过滤
+					out.set(`${scene}/skills/${skill}`, { pkgPath, isDir: true, hash: hashDirContent(pkgPath) });
+				}
+			}
+		}
+		const promptsRoot = assetsRoots.prompts;
+		if (fs.existsSync(promptsRoot)) {
+			for (const scene of fs.readdirSync(promptsRoot)) {
+				const sceneDir = path.join(promptsRoot, scene);
+				if (!fs.statSync(sceneDir).isDirectory()) continue;
+				for (const f of fs.readdirSync(sceneDir)) {
+					if (!f.endsWith(".md")) continue;
+					const pkgPath = path.join(sceneDir, f);
+					out.set(`${scene}/prompts/${f}`, { pkgPath, isDir: false, hash: hashFileContent(pkgPath) });
+				}
+			}
+		}
+		return out;
+	}
+
+	type AssetsSyncReport = {
+		added: string[];
+		updated: string[];
+		conflicts: string[];
+		removed: string[];
+		baselineRepaired: string[];
+	};
+
+	/** 同步包内 vendored 资产到用户落盘（安全更新）：
+	 *  added=补缺失；updated=用户未改且包有新版→覆盖；conflicts=用户改过→保留用户版；
+	 *  removed=manifest 有记录但包内已删→仅提示不删；baselineRepaired=无基线且与包一致→补录。
+	 *  assetsRoots 可注入（测试用），缺省从本扩展包根推导。 */
+	function syncVendoredAssets(assetsRoots?: { skills: string; prompts: string }): AssetsSyncReport {
+		const report: AssetsSyncReport = { added: [], updated: [], conflicts: [], removed: [], baselineRepaired: [] };
+		let pkgRoot: string;
+		try {
+			pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+		} catch {
+			return report;
+		}
+		const roots = assetsRoots ?? { skills: path.join(pkgRoot, "assets", "scene-skills"), prompts: path.join(pkgRoot, "assets", "scene-prompts") };
+		const pkgAssets = enumeratePkgAssets(roots);
+		const manifest = loadAssetsManifest();
+		for (const [key, info] of pkgAssets) {
+			const dst = path.join(paths.scenesRoot, key);
+			if (!fs.existsSync(dst)) {
+				fs.cpSync(info.pkgPath, dst, { recursive: true });
+				manifest.files[key] = info.hash;
+				report.added.push(key);
+				continue;
+			}
+			const userHash = info.isDir ? hashDirContent(dst) : hashFileContent(dst);
+			const baseHash = manifest.files[key];
+			if (baseHash === undefined) {
+				// 无基线（manifest 机制引入前的落盘）：与包一致→补录基线；不一致→保守冲突
+				if (userHash === info.hash) {
+					manifest.files[key] = info.hash;
+					report.baselineRepaired.push(key);
+				} else {
+					report.conflicts.push(key);
+				}
+			} else if (userHash === baseHash) {
+				// 用户未改：跟随包新版
+				if (userHash !== info.hash) {
+					fs.rmSync(dst, { recursive: true });
+					fs.cpSync(info.pkgPath, dst, { recursive: true });
+					manifest.files[key] = info.hash;
+					report.updated.push(key);
+				}
+			} else {
+				// 用户改过：保留用户版（不动 manifest 基线）
+				report.conflicts.push(key);
+			}
+		}
+		// 包内已删的预设：仅报告（不自动删用户文件）
+		for (const key of Object.keys(manifest.files)) {
+			if (!pkgAssets.has(key)) report.removed.push(key);
+		}
+		saveAssetsManifest(manifest);
+		return report;
+	}
+
 	/**
 	 * 生成模板 scenes.json + 场景 skill 目录骨架 + 预置精选技能。
 	 * 预设均为真实存在的包（npm/git，2026-09 核验）；git 技能包用 object form
@@ -1101,37 +1233,13 @@ export function makeCore(baseDir: string, projectDir?: string) {
 				}
 			}
 		}
-		// 预置精选技能：从包内 assets/scene-skills/<场景>/ 复制到场景 skill 目录。
-		// 仅在目标不存在时写入（幂等，不覆盖用户已有同名技能）；复制后归用户所有，可改可删。
+		// v0.10：vendored 预置（技能+模板）统一走安全同步：补缺失 + 记指纹基线 +
+		// 未修改的跟随包新版（用户改过的保留）。所有权语义见 syncVendoredAssets 注释。
 		try {
-			const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-			const assetsRoot = path.join(pkgRoot, "assets", "scene-skills");
-			if (fs.existsSync(assetsRoot)) {
-				for (const scene of fs.readdirSync(assetsRoot)) {
-					const srcScene = path.join(assetsRoot, scene);
-					if (!fs.statSync(srcScene).isDirectory()) continue;
-					for (const skill of fs.readdirSync(srcScene)) {
-						const src = path.join(srcScene, skill);
-						const dst = path.join(paths.scenesRoot, scene, "skills", skill);
-						if (!fs.existsSync(path.join(src, "SKILL.md")) || fs.existsSync(dst)) continue;
-						fs.cpSync(src, dst, { recursive: true });
-						created.push(dst);
-					}
-				}
-			}
-				// v0.8：预置场景模板 assets/scene-prompts/<场景>/*.md → scenes/<场景>/prompts/（幂等复制，不覆盖用户已有）
-				const promptsAssetsRoot = path.join(pkgRoot, "assets", "scene-prompts");
-				if (fs.existsSync(promptsAssetsRoot)) {
-					for (const scene of fs.readdirSync(promptsAssetsRoot)) {
-						const srcScene = path.join(promptsAssetsRoot, scene);
-						if (!fs.statSync(srcScene).isDirectory()) continue;
-						const dst = path.join(paths.scenesRoot, scene, "prompts");
-						const copied = copyTreeIfMissing(srcScene, dst);
-						if (copied > 0) created.push(dst);
-					}
-				}
+			const report = syncVendoredAssets();
+			for (const key of report.added) created.push(path.join(paths.scenesRoot, key));
 		} catch {
-			// 资产复制失败不阻断 scaffold（如测试环境无 assets）
+			// 资产同步失败不阻断 scaffold（如测试环境无 assets）
 		}
 		return created;
 	}
@@ -1163,6 +1271,7 @@ export function makeCore(baseDir: string, projectDir?: string) {
 		endSession,
 		buildToolMap,
 		scaffold,
+		syncVendoredAssets,
 	};
 }
 
@@ -1319,6 +1428,7 @@ export default function (pi: ExtensionAPI) {
 			["migrate", "把 ≤0.6 遗留的全局场景转为当前项目场景"],
 			["init", "生成模板 scenes.json 与 skill 骨架"],
 			["stats", "用量仪表盘（会话/工具调用/反思）"],
+			["update-assets", "同步包内预置模板/skill（未修改的跟随新版，改过的保留）"],
 			["evolve", "生成并应用进化提案"],
 			["evolve auto", "开关：会话结束自动应用进化"],
 		];
@@ -1395,6 +1505,26 @@ export default function (pi: ExtensionAPI) {
 				if (collisions.length > 0) {
 					lines.push(`⚠️ 同包多种写法（已按首个生效）：${collisions.map((c) => `${c.id}(${c.entries.map((e) => e.spec).join("|")})`).join("、")}`);
 				}
+				ctx.ui.notify(lines.join("\n"), "info");
+				return;
+			}
+
+			if (arg === "update-assets") {
+				const r = core.syncVendoredAssets();
+				const total = r.added.length + r.updated.length + r.conflicts.length + r.removed.length + r.baselineRepaired.length;
+				if (total === 0) {
+					ctx.ui.notify("预置资产已是最新（无新增/更新/冲突）", "info");
+					return;
+				}
+				const lines = [
+					`预置资产同步（包内 assets → ~/.pi/agent/scenes/）：`,
+					r.added.length ? `  + 新增 ${r.added.length}：${r.added.join("、")}` : "",
+					r.updated.length ? `  ↻ 更新 ${r.updated.length}（你未修改，已跟随包新版）：${r.updated.join("、")}` : "",
+					r.conflicts.length ? `  ⚠️ 冲突 ${r.conflicts.length}（你改过，保留你的版本）：${r.conflicts.join("、")}` : "",
+					r.removed.length ? `  ✂️ 包内已移除 ${r.removed.length}（本地保留未删）：${r.removed.join("、")}` : "",
+					r.baselineRepaired.length ? `  ∿ 补录基线 ${r.baselineRepaired.length}（首次纳入指纹管理）` : "",
+				].filter(Boolean);
+				if (r.updated.length > 0) lines.push("已更新模板/skill，/reload 后生效");
 				ctx.ui.notify(lines.join("\n"), "info");
 				return;
 			}

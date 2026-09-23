@@ -646,3 +646,102 @@ test("v0.8 resources_discover 语义：prompts 不写 settings，切走零残留
 	const active = core.computeTarget(core.effectiveActive(), core.loadScenes());
 	assert.deepEqual(active.prompts, [`${os.homedir()}/my-templates`]);
 });
+
+// ── v0.10：vendored 资产指纹与安全更新 ─────────────────────
+
+function makeFakeAssets(root, version) {
+	// 构造包内 assets：skills/<scene>/<skill>/SKILL.md + prompts/<scene>/tpl.md
+	const skills = path.join(root, "scene-skills", "learning", "eli5");
+	fs.mkdirSync(skills, { recursive: true });
+	fs.writeFileSync(path.join(skills, "SKILL.md"), `# eli5 v${version}\nanalogy-first\n`);
+	const prompts = path.join(root, "scene-prompts", "coding");
+	fs.mkdirSync(prompts, { recursive: true });
+	fs.writeFileSync(path.join(prompts, "pre-commit.md"), `---\ndescription: v${version}\n---\nstep list v${version}\n`);
+	return { skills: path.join(root, "scene-skills"), prompts: path.join(root, "scene-prompts") };
+}
+
+test("v0.10 syncVendoredAssets：首次全 added + manifest 基线", () => {
+	const { core } = tmpBase();
+	const roots = makeFakeAssets(path.join(core.paths.baseDir, "fake-pkg"), "1");
+	const r = core.syncVendoredAssets(roots);
+	assert.deepEqual(r.added.sort(), ["coding/prompts/pre-commit.md", "learning/skills/eli5"]);
+	assert.equal(r.updated.length, 0);
+	const m = JSON.parse(fs.readFileSync(core.paths.assetsManifest, "utf8"));
+	assert.ok(m.files["learning/skills/eli5"], "manifest 记录 skill 目录指纹");
+});
+
+test("v0.10 用户未改 + 包升级 → updated 覆盖跟随新版", () => {
+	const { core } = tmpBase();
+	const pkgDir = path.join(core.paths.baseDir, "fake-pkg");
+	makeFakeAssets(pkgDir, "1");
+	core.syncVendoredAssets({ skills: path.join(pkgDir, "scene-skills"), prompts: path.join(pkgDir, "scene-prompts") });
+	// 包升级到 v2
+	const roots = makeFakeAssets(pkgDir, "2");
+	const r = core.syncVendoredAssets(roots);
+	assert.deepEqual(r.updated.sort(), ["coding/prompts/pre-commit.md", "learning/skills/eli5"]);
+	assert.ok(fs.readFileSync(path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md"), "utf8").includes("v2"), "落盘已是新版");
+});
+
+test("v0.10 用户改过 → conflict 保留用户版，再跑稳定不重复报告", () => {
+	const { core } = tmpBase();
+	const pkgDir = path.join(core.paths.baseDir, "fake-pkg");
+	const roots = makeFakeAssets(pkgDir, "1");
+	core.syncVendoredAssets(roots);
+	const mine = path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md");
+	fs.writeFileSync(mine, "用户自定义流程");
+	const r2 = core.syncVendoredAssets(roots);
+	assert.deepEqual(r2.conflicts, ["coding/prompts/pre-commit.md"]);
+	assert.equal(fs.readFileSync(mine, "utf8"), "用户自定义流程", "用户版保留");
+	// 稳定性：再跑一次仍是同一 conflict（不覆盖、不误报 updated）
+	const r3 = core.syncVendoredAssets(roots);
+	assert.deepEqual(r3.conflicts, ["coding/prompts/pre-commit.md"]);
+	assert.equal(r3.updated.length, 0);
+});
+
+test("v0.10 用户改过 + 包也升级 → 仍保留用户版（改动态优先）", () => {
+	const { core } = tmpBase();
+	const pkgDir = path.join(core.paths.baseDir, "fake-pkg");
+	makeFakeAssets(pkgDir, "1");
+	core.syncVendoredAssets({ skills: path.join(pkgDir, "scene-skills"), prompts: path.join(pkgDir, "scene-prompts") });
+	fs.writeFileSync(path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md"), "用户自定义流程");
+	const roots2 = makeFakeAssets(pkgDir, "2"); // 包升级
+	const r = core.syncVendoredAssets(roots2);
+	assert.deepEqual(r.conflicts, ["coding/prompts/pre-commit.md"]);
+	assert.ok(r.updated.includes("learning/skills/eli5"), "未改的 skill 正常更新");
+});
+
+test("v0.10 包内删除预设 → removed 仅提示，本地保留", () => {
+	const { core } = tmpBase();
+	const pkgDir = path.join(core.paths.baseDir, "fake-pkg");
+	makeFakeAssets(pkgDir, "1");
+	core.syncVendoredAssets({ skills: path.join(pkgDir, "scene-skills"), prompts: path.join(pkgDir, "scene-prompts") });
+	// 模拟包 v2 删掉了 eli5
+	fs.rmSync(path.join(pkgDir, "scene-skills"), { recursive: true });
+	const r = core.syncVendoredAssets({ skills: path.join(pkgDir, "scene-skills"), prompts: path.join(pkgDir, "scene-prompts") });
+	assert.deepEqual(r.removed, ["learning/skills/eli5"]);
+	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "learning", "skills", "eli5", "SKILL.md")), "本地未删");
+});
+
+test("v0.10 无 manifest 首跑（存量落盘）→ 一致补录基线，不一致保守冲突", () => {
+	const { core } = tmpBase();
+	const pkgDir = path.join(core.paths.baseDir, "fake-pkg");
+	const roots = makeFakeAssets(pkgDir, "1");
+	// 模拟 v0.9 时代落盘：无 manifest，pre-commit 被用户改过，eli5 原样
+	fs.mkdirSync(path.join(core.paths.scenesRoot, "learning", "skills", "eli5"), { recursive: true });
+	fs.writeFileSync(path.join(core.paths.scenesRoot, "learning", "skills", "eli5", "SKILL.md"), "# eli5 v1\nanalogy-first\n");
+	fs.mkdirSync(path.join(core.paths.scenesRoot, "coding", "prompts"), { recursive: true });
+	fs.writeFileSync(path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md"), "用户旧版流程");
+	const r = core.syncVendoredAssets(roots);
+	assert.deepEqual(r.baselineRepaired, ["learning/skills/eli5"]);
+	assert.deepEqual(r.conflicts, ["coding/prompts/pre-commit.md"]);
+	assert.equal(fs.readFileSync(path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md"), "utf8"), "用户旧版流程");
+});
+
+test("v0.10 scaffold 内建同步：产出 manifest 且预置落盘", () => {
+	const { core } = tmpBase();
+	core.scaffold();
+	assert.ok(fs.existsSync(core.paths.assetsManifest), "manifest 生成");
+	const m = JSON.parse(fs.readFileSync(core.paths.assetsManifest, "utf8"));
+	assert.ok(m.files["coding/prompts/pre-commit.md"]);
+	assert.ok(m.files["learning/skills/eli5"]);
+});

@@ -55,6 +55,7 @@ Then `/reload` and `/scene` is live.
 /scene migrate    # convert a ≤0.6 legacy global scene into this project's scene
 /scene init       # scaffold scenes.json template + scene skill dirs
 /scene stats      # usage dashboard: sessions, tool calls, reflections
+/scene update-assets # sync preset templates/skills from the package (edits kept, rest updated)
 /scene evolve     # generate & apply evolution proposals (confirm-first)
 /scene evolve auto # toggle auto-apply at session end (opt-in)
 ```
@@ -264,6 +265,11 @@ Before uninstalling, `/scene off` and prune entries you don't want to keep from 
 
 ## Changelog
 
+### v0.10.0 (2026-09-23)
+
+- **Vendored asset fingerprints + safe updates** — preset templates/skills copied to `~/.pi/agent/scenes/` now record a content-hash baseline (`.assets-manifest.json`). New `/scene update-assets` command syncs package assets to your disk: **untouched files follow new package versions; files you edited are kept yours** (listed as conflicts); presets removed from the package are reported but never auto-deleted. Closes the "npm updates don't update vendored assets" gap — ownership transfer no longer means losing updates
+- Scaffold now runs the same safe sync internally (fills missing + records baselines)
+
 ### v0.9.0 (2026-09-23)
 
 - **New preset scene: `learning` 📚** (8th preset) — knowledge internalization, verification, and spaced review. Ships `pi-web-access` (learning materials) + `pi-subagents` (parallel multi-perspective study), three workflow templates (`/feynman` four-step internalization, `/socratic` question-only verification, `/flashcards` Q&A+cloze cards with a spaced-repetition schedule), and a vendored `eli5` skill (analogy-first, zero-jargon first pass, 5yo/12yo/adult three-tier explanations)
@@ -347,6 +353,7 @@ pi install git:github.com/Feng-H/pi-scenes
 /scene migrate    # 把 ≤0.6 遗留的全局场景转为当前项目场景
 /scene init       # 生成模板 scenes.json + 场景 skill 目录骨架
 /scene stats      # 用量仪表盘：会话数 / 工具调用 / 反思评分
+/scene update-assets # 同步包内预置模板/skill（未修改跟随新版，改过的保留）
 /scene evolve     # 生成并应用进化提案（逐条确认）
 /scene evolve auto # 开关：会话结束自动应用（opt-in）
 ```
@@ -548,6 +555,11 @@ cp ~/.pi/agent/settings.json.scenes-bak ~/.pi/agent/settings.json   # 如需恢�
 managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packages`/`skills` 里不想保留的条目；`scenes.json` / `scenes-state.json` / `scenes/` 目录留着不影响 pi 运行。
 
 ## 版本历史
+
+### v0.10.0（2026-09-23）
+
+- **vendored 资产指纹 + 安全更新**——预置模板/skill 复制到 `~/.pi/agent/scenes/` 时记录内容指纹基线（`.assets-manifest.json`）。新增 `/scene update-assets` 命令同步包内资产到落盘：**你未修改的跟随包新版，你改过的保留你的版本**（列为冲突清单），包内已删除的预设仅提示不自动删。补上「npm 更新不更新 vendored 资产」的缺口——所有权移交不再等于更新断绝
+- scaffold 内部改走同一套安全同步（补缺失 + 记基线）
 
 ### v0.9.0（2026-09-23）
 
