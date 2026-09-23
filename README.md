@@ -70,7 +70,7 @@ First run of `/scene` offers to generate the template. It ships with **eight pre
 | `research` | `npm:pi-web-access`, `npm:pi-subagents` | 预置：arxiv-research, openalex-paper-search | `/deep-dive` |
 | `writing` | `npm:pi-web-access` | `anthropics/skills` → doc-coauthoring；预置：humanizer | `/fact-check` |
 | `data` | `npm:pi-docparser`, `npm:pi-mcp-adapter` | — | `/data-audit` |
-| `learning` | `npm:pi-web-access`, `npm:pi-subagents` | — | `/feynman`, `/socratic`, `/flashcards` |
+| `learning` | `npm:pi-web-access`, `npm:pi-subagents` | 预置：eli5 | `/feynman`, `/socratic`, `/flashcards` |
 
 Each preset template is a fixed procedure that forbids step-skipping (e.g. `/pre-commit` = build → test → diff review → commit message, each step ✅/❌ with evidence). After switching scenes, try the scene's template command directly; drop your own `.md` files into `~/.pi/agent/scenes/<name>/prompts/` to add more.
 
@@ -346,7 +346,7 @@ pi install git:github.com/Feng-H/pi-scenes
 | `research` | `npm:pi-web-access`、`npm:pi-subagents` | 多源搜索/抓取/PDF/视频，并行多角度深挖 |
 | `writing` | `npm:pi-web-access` | 素材检索与事实核查（引用溯源） |
 | `data` | `npm:pi-docparser`、`npm:pi-mcp-adapter` | 表格结构化抽取、接任意 MCP server（数据库/BI） |
-| `learning` | `npm:pi-web-access`、`npm:pi-subagents` | 学习材料获取（文档/教程/视频）、并行多视角学习 |
+| `learning` | `npm:pi-web-access`、`npm:pi-subagents` | 学习材料获取、并行多视角学习；预置 skill：eli5（大白话解释） |
 
 v0.8 起每个预设场景还携带流程模板（coding→`/pre-commit`、office→`/doc-from-notes`、pm→`/prd-skeleton`、research→`/deep-dive`、writing→`/fact-check`、data→`/data-audit`；v0.9 learning 场景→`/feynman` 费曼内化 + `/socratic` 苏格拉底检验 + `/flashcards` 闪卡复习，三件套），切换后直接可用；自己加模板只需往 `~/.pi/agent/scenes/<名>/prompts/` 丢 `.md` 文件。
 

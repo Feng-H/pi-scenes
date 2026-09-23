@@ -620,6 +620,7 @@ test("v0.8 scaffold：模板 scenes.json 含 prompts 字段 + prompts 目录骨�
 	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "coding", "prompts", "pre-commit.md")));
 	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "research", "prompts", "deep-dive.md")));
 	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "learning", "prompts", "feynman.md")));
+	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "learning", "skills", "eli5", "SKILL.md")), "eli5 预置技能");
 	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "learning", "prompts", "socratic.md")));
 	assert.ok(fs.existsSync(path.join(core.paths.scenesRoot, "learning", "prompts", "flashcards.md")));
 	// 幂等：用户改过的文件不被 scaffold 覆盖
