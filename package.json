@@ -1,7 +1,7 @@
 {
   "name": "pi-scenes",
   "version": "0.8.0",
-  "description": "pi 扩展：场景切换器 + 资源自进化。通用层+分场景层打包 extension/skill，/scene 热切换；v0.8 场景化 prompt 模板（resources_discover 动态注入，零 settings 污染）；按实际用量生成吸收/淘汰提案，让场景定义随使用习惯进化。",
+  "description": "Scene switcher for pi: bundle extensions, skills, and prompt templates into a common layer + per-scene layers. /scene hot-switches with live reload (project-scoped, zero settings residue); scene-scoped workflow templates arrive via resources_discover with no config writes; scene definitions self-evolve from real usage (tool-call attribution + session-end LLM reflection).",
   "keywords": [
     "pi-package"
   ],
