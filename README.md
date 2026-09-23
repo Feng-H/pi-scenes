@@ -122,6 +122,25 @@ Anchors make re-switching instant: the git clone stays warm in `~/.pi/agent/git`
 
 Upgrading from ≤0.6? The first session shows a one-time notice; `/scene migrate` converts the legacy global scene into this project's scene in one step.
 
+### Resource loading: shared vs copied (no symlinks, ever)
+
+What actually lands on disk when you switch scenes:
+
+| Resource | Mechanism | On disk in the project |
+|---|---|---|
+| Scene extensions (npm/git packages, e.g. `anthropics/skills` skill bundles) | **Declared, never copied** — settings entries point at the single global install (`~/.pi/agent/{npm,git}`); pi loads code/SKILL.md straight from there | nothing |
+| Scene skill dirs (scaffold presets + anything you drop in `~/.pi/agent/scenes/<name>/skills`) | **Copied once per project** on first switch (idempotent — only missing files, never overwrites your edits) | `<cwd>/.pi/scenes/<name>/skills/` |
+| Custom skill paths outside the scenes root (e.g. `~/my-shared-skills`) | Referenced as-is, not copied | — |
+
+Two consequences worth internalizing:
+
+- **Loaded ≠ present.** Switching scenes swaps the *declarations*; disks keep whatever was copied before. After office→coding, the office skill dir still sits in `<cwd>/.pi/scenes/office/` but has no settings entry pointing at it — never scanned, never loaded, zero prompt cost. It only means switching back is instant.
+- **Copies are yours.** A vendored skill copied into the project can be edited or deleted freely; upgrading pi-scenes never touches it. Want your improvement everywhere? Edit the global source (`~/.pi/agent/scenes/<name>/skills/`) and let other projects copy it on their first switch.
+
+### Known limitation: cross-scene npm extensions are a global singleton
+
+Skill exposure (the main point of scenes) is fully project-scoped via deltas. npm *extensions*, however, register their activation entries in the global layer — one slot per package. Running two pi instances in different projects with different scenes (A on `coding`, B on `office`): whichever switches last removes the other's npm entries from global settings on its next reload (skills stay fine; extensions like pi-lens/pi-docparser swap). Single-project workflows never hit this. If you need concurrent per-project extension sets, tell me — a future version can project-scope npm extensions at the cost of per-project `node_modules`.
+
 ### Status-bar scene badge
 
 A successful switch sets a persistent footer badge (`◆ coding`), restored automatically at every session start and cleared by `/scene off`. The status bar should answer *"which scene am I in"* — not display tool internals.
@@ -329,6 +348,25 @@ pi install git:github.com/Feng-H/pi-scenes
 
 场景 skill 目录里放 `SKILL.md` 文件夹（或 `.md` 文件）即可，切换场景时整目录启停。
 `/scene init` 会创建 `~/.pi/agent/scenes/{common,coding,office,pm,research,writing,data}/skills/` 骨架。
+
+### 资源加载方式：大件共享、小件复制、全程无软链接
+
+切换场景时各资源到底怎么落到磁盘：
+
+| 资源 | 机制 | 项目磁盘上 |
+|---|---|---|
+| 场景扩展（npm/git 包，如 anthropics/skills 技能包） | **声明式引用，永不复制**——settings 条目指向全局唯一安装（`~/.pi/agent/{npm,git}`），pi 直接从那里加载代码/SKILL.md | 什么都没有 |
+| 场景技能目录（脚手架预置 + 你投进 `~/.pi/agent/scenes/<名>/skills` 的一切） | **每项目首次切换时复制一次**（幂等——只补缺失文件，绝不覆盖你的修改） | `<cwd>/.pi/scenes/<名>/skills/` |
+| scenesRoot 之外的自定义技能路径（如 `~/my-shared-skills`） | 原样引用，不复制 | — |
+
+两个值得记住的推论：
+
+- **「存在」≠「加载」。** 切换换的是声明，磁盘留着切过的所有副本。office→coding 后，office 技能目录仍在 `<cwd>/.pi/scenes/office/`，但没有任何 settings 条目指向它——不被扫描、不被加载、零提示成本；意义仅是切回时秒级。
+- **复制即所有。** 复制进项目的技能随意改删，升级 pi-scenes 永远不会碰它；想让改进全局生效，改全局源（`~/.pi/agent/scenes/<名>/skills/`），其他项目首切时自然复制到。
+
+### 已知限制：跨场景 npm 扩展是全局单例
+
+技能暴露（场景的核心差异）已通过 delta 完全项目级隔离；但 npm 扩展的激活条目在全局层——每包一个坑位。两个 pi 实例在不同项目跑不同场景（A 用 coding、B 用 office）时，后切换的一方会把先切换方的 npm 条目从全局 settings 摘掉（技能不受影响；pi-lens/pi-docparser 这类扩展会互换）。单项目工作流永远碰不到这个问题；确实需要多项目并行各自扩展集的，可以做到（代价：每项目重复装 node_modules），需要请在 issue 里说一声。
 
 ### 状态栏场景徽标
 
