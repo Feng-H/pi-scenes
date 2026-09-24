@@ -695,21 +695,28 @@ export function makeCore(baseDir: string, projectDir?: string) {
 					: { source: specOf(raw), autoload: false, skills: ["**"], extensions: ["**"], prompts: ["**"], themes: ["**"] }
 				: raw;
 			if (landed) {
-				// 用户先前手配的同包全局条目（摘旧后仍在 = 非本次 pi install 写入、非旧版 managed 遗留）
-				// → 借用语义：全局已覆盖所有项目，不落项目 delta、不加锚点
+				// 零暴露锚点形态判定：autoload:false 且四类资源过滤全空 —— 什么也不加载，
+				// 不构成「用户的全局选择」；旧版未入账的锚点也走归一化补账而非借用
+				const isAnchorForm = (x: PackageEntry | undefined): boolean =>
+					typeof x === "object" &&
+					x !== null &&
+					(x as Record<string, unknown>).autoload === false &&
+					["skills", "extensions", "prompts", "themes"].every((k) => {
+						const v = (x as Record<string, unknown>)[k];
+						return !Array.isArray(v) || v.length === 0;
+					});
 				const preUserList = preInstallPackages ?? oldUserPkgs;
-				const inCurrentUser = userPkgs.some((x) => sameResource(x, raw));
-				const userOwn = inCurrentUser && preUserList.some((x) => sameResource(x, raw));
-				if (userOwn) {
+				const existing = userPkgs.find((x) => sameResource(x, raw));
+				// 用户手配 = 摘旧后仍在、pre 快照已有、且非锚点形态（功能性全局条目才算用户选择）
+				if (existing !== undefined && !isAnchorForm(existing) && preUserList.some((x) => sameResource(x, raw))) {
 					result.borrowedPackages.push(raw);
 					continue;
 				}
-				if (inCurrentUser) userPkgs = userPkgs.filter((x) => !sameResource(x, raw)); // 摘 pi install 刚写入的裸串
+				// 锚点归一化：裸串/旧形态 → 唯一锚点形态，并补入 anchors 账本（旧版未入账自愈）
 				const anchor: PackageEntry = { source: specOf(raw), autoload: false, skills: [] };
-				if (!anchors.some((a) => sameResource(a, anchor))) {
-					userPkgs.push(anchor);
-					anchors.push(anchor);
-				}
+				if (!anchors.some((a) => sameResource(a, anchor))) anchors.push(anchor);
+				userPkgs = userPkgs.filter((x) => x !== existing && !sameEntry(x, anchor));
+				userPkgs.push(anchor);
 			}
 			let pkgsRef = landed ? projPkgs : userPkgs;
 			const sink = landed ? newProjManagedPkgs : newUserManagedPkgs;

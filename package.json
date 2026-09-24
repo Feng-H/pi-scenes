@@ -1,6 +1,6 @@
 {
 	"name": "pi-scenes",
-	"version": "0.11.0",
+	"version": "0.11.1",
 	"description": "Scene switcher for pi: bundle extensions, skills, and prompt templates into a common layer + per-scene layers. /scene hot-switches with live reload (project-scoped, zero settings residue); scene-scoped workflow templates arrive via resources_discover with no config writes; scene definitions self-evolve from real usage (tool-call attribution + session-end LLM reflection).",
 	"keywords": [
 		"pi-package"

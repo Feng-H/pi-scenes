@@ -266,6 +266,10 @@ Before uninstalling, `/scene off` and prune entries you don't want to keep from 
 
 ## Changelog
 
+### v0.11.1 (2026-09-24)
+
+- **Anchor-form fix for borrowed detection** — a pre-existing zero-exposure anchor entry (`{source, autoload:false, skills:[]}`) in user settings (e.g. written by ≤v0.10 without being recorded in the anchors ledger) is no longer misjudged as a user-configured global: re-activation now normalizes it back into the anchor ledger and lands the project delta instead of skipping it as borrowed
+
 ### v0.11.0 (2026-09-24)
 
 - **Full spatial isolation for scene packages** — plain `npm:` scene packages now land in the *project* layer as a universal delta (`{source, autoload:false, skills:["**"], extensions:["**"], prompts:["**"], themes:["**"]}`) with a zero-exposure global anchor, exactly like filtered git bundles since v0.7. One shared install (no per-project node_modules), and a fresh directory now loads **only the common layer**. Fixes the v0.7–v0.10 leak where scene npm packages sat in global settings and loaded in *every* project while the scene was active somewhere. Re-activating an existing scene migrates leaked entries automatically; user-configured global packages keep borrowed semantics
@@ -561,6 +565,10 @@ cp ~/.pi/agent/settings.json.scenes-bak ~/.pi/agent/settings.json   # 如需恢�
 managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packages`/`skills` 里不想保留的条目；`scenes.json` / `scenes-state.json` / `scenes/` 目录留着不影响 pi 运行。
 
 ## 版本历史
+
+### v0.11.1（2026-09-24）
+
+- **锚点形态借用误判修复**——全局层既有的零暴露锚点条目（`{source, autoload:false, skills:[]}`，≤v0.10 写入但 anchors 账本未记录）不再被误判为用户手配的全局配置：重新激活时归一化补入账本并正常落项目 delta，而非按借用跳过
 
 ### v0.11.0（2026-09-24）
 

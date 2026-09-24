@@ -616,6 +616,21 @@ test("v0.9 preInstall：pi install 刚写入的裸串 → 摘为锚点 + 项目 
 	assert.ok(!r.borrowedPackages.includes("npm:pi-carryover"), "非借用");
 });
 
+test("v0.11.1 锚点误判修复：旧版未入账的零暴露锚点 → 归一化补账，不视为用户手配", () => {
+	const { core, dir } = tmpDual();
+	const CFG = dualCfg(dir);
+	// 模拟真实存量状态：全局层已有 anthropic 零暴露锚点形态，但 state anchors 账本为空（旧版遗留）
+	writeSettings(core, { packages: [{ source: "git:github.com/anthropics/skills", autoload: false, skills: [] }] });
+
+	const r = core.applyToSettings(core.computeTarget("coding", CFG), "coding", undefined, "project");
+	const user = JSON.parse(fs.readFileSync(core.paths.settingsFile, "utf8"));
+	const proj = JSON.parse(fs.readFileSync(core.paths.projectSettingsFile, "utf8"));
+	assert.ok(!r.borrowedPackages.some((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills"), "锚点形态不算借用");
+	assert.ok(proj.packages.some((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills" && p.skills.includes("skills/docx")), "项目 delta 正常落地");
+	assert.equal(user.packages.filter((p) => typeof p === "object" && p.source === "git:github.com/anthropics/skills").length, 1, "全局层唯一锚点形态");
+	assert.ok(core.loadUserState().anchors.some((a) => a.source === "git:github.com/anthropics/skills"), "anchors 账本补录");
+});
+
 // ── v0.8：场景化 prompt 模板 ──────────────────────────────
 
 test("v0.8 computeTarget：prompts 通用层 ∪ 场景，~ 展开，去重", () => {
