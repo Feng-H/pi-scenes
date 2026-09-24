@@ -21,6 +21,7 @@ active resources = common layer ∪ current scene
 - **Scene layers** — per-scenario bundles (coding / office / writing…), loaded only while active
 - **Project-scoped by default (v0.7)** — `/scene office` writes activation entries to `<cwd>/.pi/settings.json`, so a scene belongs to *this* directory only; opening a fresh directory starts clean. `--global` keeps the ≤0.6 all-projects behavior
 - **Asset/activation split (v0.7)** — packages are installed once globally and shared across projects; git skill bundles are pinned as zero-exposure *anchors* (`{source, autoload:false, skills:[]}`) in user settings, while the project layer writes a *delta* (`{source, autoload:false, skills:[...]}`) that enables just the scene's whitelist — one clone, per-project curation, via pi's native delta mechanism
+- **Full spatial isolation for scene packages (v0.11)** — *every* scene package (plain `npm:` specs included, not just filtered git bundles) now lands in the project layer as a universal delta (`{source, autoload:false, skills:["**"], extensions:["**"], ...}`) with a zero-exposure global anchor — one shared install, zero disk duplication, and a fresh directory loads **only the common layer**. Fixes the v0.7-v0.10 behavior where plain npm scene packages leaked into global settings and loaded in every project while the scene was active. Re-activating an existing scene migrates the leaked entries automatically (borrow semantics for user-configured globals is preserved)
 - **Scene-scoped prompt templates (v0.8)** — each scene can also bundle workflow templates (`prompts` field): fixed checklists that pin down step-by-step procedures so the model can't take shortcuts. Scene = **tools + skills + workflow templates** as one unit
 - Switching rewrites `packages`/`skills` in `settings.json`, then `ctx.reload()` hot-reloads — **no pi restart, session untouched**; prompt templates take a different path: injected via pi's `resources_discover` event with **zero settings writes**
 - Every switch stamps a persistent **status-bar badge** (`◆ coding`, or a per-scene `icon` like `💻 coding`) so the bar always answers *"which scene am I in"* — restored at session start, cleared by `/scene off`
@@ -265,6 +266,10 @@ Before uninstalling, `/scene off` and prune entries you don't want to keep from 
 
 ## Changelog
 
+### v0.11.0 (2026-09-24)
+
+- **Full spatial isolation for scene packages** — plain `npm:` scene packages now land in the *project* layer as a universal delta (`{source, autoload:false, skills:["**"], extensions:["**"], prompts:["**"], themes:["**"]}`) with a zero-exposure global anchor, exactly like filtered git bundles since v0.7. One shared install (no per-project node_modules), and a fresh directory now loads **only the common layer**. Fixes the v0.7–v0.10 leak where scene npm packages sat in global settings and loaded in *every* project while the scene was active somewhere. Re-activating an existing scene migrates leaked entries automatically; user-configured global packages keep borrowed semantics
+
 ### v0.10.0 (2026-09-23)
 
 - **Vendored asset fingerprints + safe updates** — preset templates/skills copied to `~/.pi/agent/scenes/` now record a content-hash baseline (`.assets-manifest.json`). New `/scene update-assets` command syncs package assets to your disk: **untouched files follow new package versions; files you edited are kept yours** (listed as conflicts); presets removed from the package are reported but never auto-deleted. Closes the "npm updates don't update vendored assets" gap — ownership transfer no longer means losing updates
@@ -319,6 +324,7 @@ pi 的 `packages` / `skills` 是全局平铺的：所有已安装扩展、所有
 - **场景层**：每个场景自己的一组 extension + skill，激活才加载
 - **默认项目级（v0.7）**——`/scene office` 把激活条目写进 `<cwd>/.pi/settings.json`，场景只属于当前目录；新建目录零残留、干净启动。`--global` 保留 ≤0.6 的全目录生效语义
 - **资产/激活分离（v0.7）**——包只全局装一份、所有项目共享；git 技能包在全局层钉为零暴露**锚点**（`{source, autoload:false, skills:[]}`），项目层写 **delta**（`{source, autoload:false, skills:[白名单]}`）按场景启用——借 pi 原生 delta 机制做到「一份克隆、每项目各自的精选」
+- **场景包全面空间隔离（v0.11）**——所有场景包（含裸 `npm:` 串，不再限于带白名单的 git 包）统一落项目层通用 delta（`{source, autoload:false, skills:["**"], extensions:["**"], ...}`）+ 全局零暴露锚点——共享一份安装、零磁盘复制，新目录只加载通用层。修复 v0.7~v0.10 裸 npm 场景包泄漏到全局 settings、场景激活期间所有项目都加载的问题；存量泄漏在重新激活场景时自动迁移修复（用户手配的全局同包仍保持借用语义）
 - **场景化 prompt 模板（v0.8）**——每个场景可携带流程模板（`prompts` 字段）：把固定流程的步骤清单固化成 `/命令`，模型无法挑最快路径跳步。场景成为**工具 + 技能 + 流程模板**三位一体
 - 切换 = 改写 `settings.json` 的 `packages`/`skills` → `ctx.reload()` 热重载，**无需重启 pi**；prompt 模板走另一条路：经 pi 的 `resources_discover` 事件动态注入，**零 settings 写入**
 - 每次切换成功后状态栏常驻**场景徽标**（`◆ coding`，或每场景自定义 `icon` 如 `💻 coding`），状态栏随时回答「我现在在哪个场景」——会话启动自动恢复，`/scene off` 清除
@@ -555,6 +561,10 @@ cp ~/.pi/agent/settings.json.scenes-bak ~/.pi/agent/settings.json   # 如需恢�
 managed 注入的条目在卸载前建议先 `/scene off` + 手工清理 `packages`/`skills` 里不想保留的条目；`scenes.json` / `scenes-state.json` / `scenes/` 目录留着不影响 pi 运行。
 
 ## 版本历史
+
+### v0.11.0（2026-09-24）
+
+- **场景包全面空间隔离**——裸 `npm:` 场景包与 v0.7 起的 git 白名单包同等待遇：统一落项目层通用 delta（`{source, autoload:false, skills:["**"], extensions:["**"], prompts:["**"], themes:["**"]}`）+ 全局零暴露锚点。共享一份全局安装（零磁盘复制），新目录只加载**通用层**。修复 v0.7~v0.10 期间裸 npm 场景包写入全局 settings、场景激活期间所有项目都加载的泄漏；重新激活场景即自动迁移修复，用户手配的全局同包保持借用语义
 
 ### v0.10.0（2026-09-23）
 

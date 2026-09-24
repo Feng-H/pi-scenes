@@ -546,16 +546,20 @@ export function makeCore(baseDir: string, projectDir?: string) {
 	function computeTarget(
 		active: string | null,
 		cfg: ScenesFile,
-	): { packages: PackageEntry[]; skills: string[]; commonSkills: string[]; sceneSkills: string[]; prompts: string[] } {
+	): { packages: PackageEntry[]; commonPackages: PackageEntry[]; scenePackages: PackageEntry[]; skills: string[]; commonSkills: string[]; sceneSkills: string[]; prompts: string[] } {
 		const common = cfg.common ?? {};
 		let scene: SceneDef = {};
 		if (active) scene = resolveScene(active, cfg);
-		const packages = dedupeByIdentity(dedupeEntries([...(common.packages ?? []), ...(scene.packages ?? [])]));
+		// v0.9 空间隔离：拆分归属——与通用层同身份的场景包归通用层（常驻语义优先，防双层重复）
+		const commonPackages = dedupeEntries([...(common.packages ?? [])]);
+		const scenePackagesAll = dedupeEntries([...(scene.packages ?? [])]);
+		const scenePackages = scenePackagesAll.filter((e) => !commonPackages.some((c) => sameResource(c, e)));
+		const packages = dedupeByIdentity(dedupeEntries([...commonPackages, ...scenePackagesAll]));
 		const commonSkills = [...new Set([...(common.skills ?? [])].map(expandHome))];
 		const sceneSkills = [...new Set([...(scene.skills ?? [])].map(expandHome))];
 		const skills = [...new Set([...commonSkills, ...sceneSkills])];
 		const prompts = [...new Set([...(common.prompts ?? []), ...(scene.prompts ?? [])].map(expandHome))];
-		return { packages, skills, commonSkills, sceneSkills, prompts };
+		return { packages, commonPackages, scenePackages, skills, commonSkills, sceneSkills, prompts };
 	}
 
 	/** 包是否已安装（探测 npm 目录 / git clone 目录 / 本地路径） */
@@ -680,8 +684,33 @@ export function makeCore(baseDir: string, projectDir?: string) {
 		const newProjManagedPkgs: PackageEntry[] = [];
 		for (const raw of target.packages) {
 			// 项目模式下 filtered 条目 → delta 形态（autoload:false 复用全局克隆 + 白名单启用）
-			const e: PackageEntry = useProject && isFilteredEntry(raw) ? { ...(raw as Record<string, unknown>), autoload: false } : raw;
-			const landed = useProject && isFilteredEntry(raw);
+			// v0.9 空间隔离：项目模式下场景包（含裸 npm 串）一律落项目层 delta，全局层只留零暴露锚点。
+			// 裸 spec → 通用 delta（** 通配全启用）：复用 delta+锚点机制共享全局安装（零磁盘复制、零重复加载），
+			// 加载仅在本项目生效 —— 新目录只见通用层，场景包不再串场。
+			const isCommon = (target.commonPackages ?? []).some((c) => sameResource(c, raw));
+			const landed = useProject && !isCommon;
+			const e: PackageEntry = landed
+				? isFilteredEntry(raw)
+					? { ...(raw as Record<string, unknown>), autoload: false }
+					: { source: specOf(raw), autoload: false, skills: ["**"], extensions: ["**"], prompts: ["**"], themes: ["**"] }
+				: raw;
+			if (landed) {
+				// 用户先前手配的同包全局条目（摘旧后仍在 = 非本次 pi install 写入、非旧版 managed 遗留）
+				// → 借用语义：全局已覆盖所有项目，不落项目 delta、不加锚点
+				const preUserList = preInstallPackages ?? oldUserPkgs;
+				const inCurrentUser = userPkgs.some((x) => sameResource(x, raw));
+				const userOwn = inCurrentUser && preUserList.some((x) => sameResource(x, raw));
+				if (userOwn) {
+					result.borrowedPackages.push(raw);
+					continue;
+				}
+				if (inCurrentUser) userPkgs = userPkgs.filter((x) => !sameResource(x, raw)); // 摘 pi install 刚写入的裸串
+				const anchor: PackageEntry = { source: specOf(raw), autoload: false, skills: [] };
+				if (!anchors.some((a) => sameResource(a, anchor))) {
+					userPkgs.push(anchor);
+					anchors.push(anchor);
+				}
+			}
 			let pkgsRef = landed ? projPkgs : userPkgs;
 			const sink = landed ? newProjManagedPkgs : newUserManagedPkgs;
 			const preList = preInstallPackages ?? (landed ? oldProjPkgs : oldUserPkgs);
@@ -717,15 +746,6 @@ export function makeCore(baseDir: string, projectDir?: string) {
 				pkgsRef.push(e);
 				sink.push(e);
 				result.addedPackages.push(e);
-			}
-			// 项目层 delta 落地 → 全局层确保资产锚点（零暴露 + 共享全局克隆的 delta base）
-			if (landed) {
-				const anchor: PackageEntry = { source: specOf(raw), autoload: false, skills: [] };
-				const anchored = userPkgs.some((x) => sameResource(x, raw)) || anchors.some((a) => sameResource(a, anchor));
-				if (!anchored) {
-					userPkgs.push(anchor);
-					anchors.push(anchor);
-				}
 			}
 		}
 

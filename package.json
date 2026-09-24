@@ -1,37 +1,37 @@
 {
-  "name": "pi-scenes",
-  "version": "0.10.0",
-  "description": "Scene switcher for pi: bundle extensions, skills, and prompt templates into a common layer + per-scene layers. /scene hot-switches with live reload (project-scoped, zero settings residue); scene-scoped workflow templates arrive via resources_discover with no config writes; scene definitions self-evolve from real usage (tool-call attribution + session-end LLM reflection).",
-  "keywords": [
-    "pi-package"
-  ],
-  "type": "module",
-  "license": "MIT",
-  "author": "Feng-H",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Feng-H/pi-scenes.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Feng-H/pi-scenes/issues"
-  },
-  "homepage": "https://github.com/Feng-H/pi-scenes#readme",
-  "files": [
-    "extensions",
-    "assets",
-    "README.md",
-    "LICENSE"
-  ],
-  "scripts": {
-    "test": "node --test test/"
-  },
-  "pi": {
-    "extensions": [
-      "./extensions"
-    ]
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-ai": "*"
-  }
+	"name": "pi-scenes",
+	"version": "0.11.0",
+	"description": "Scene switcher for pi: bundle extensions, skills, and prompt templates into a common layer + per-scene layers. /scene hot-switches with live reload (project-scoped, zero settings residue); scene-scoped workflow templates arrive via resources_discover with no config writes; scene definitions self-evolve from real usage (tool-call attribution + session-end LLM reflection).",
+	"keywords": [
+		"pi-package"
+	],
+	"type": "module",
+	"license": "MIT",
+	"author": "Feng-H",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Feng-H/pi-scenes.git"
+	},
+	"bugs": {
+		"url": "https://github.com/Feng-H/pi-scenes/issues"
+	},
+	"homepage": "https://github.com/Feng-H/pi-scenes#readme",
+	"files": [
+		"extensions",
+		"assets",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"test": "node --test test/"
+	},
+	"pi": {
+		"extensions": [
+			"./extensions"
+		]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-ai": "*"
+	}
 }
